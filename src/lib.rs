@@ -1,4 +1,3 @@
-use either::Either;
 use nom::{
     branch::alt,
     character::complete::{alpha1, char, multispace0, none_of, one_of},
@@ -6,7 +5,7 @@ use nom::{
     error::{context, VerboseError},
     multi::{many0, many1, separated_list0},
     number::complete::recognize_float,
-    sequence::{delimited, pair, preceded, terminated, tuple},
+    sequence::{delimited, pair, terminated, tuple},
     IResult,
 };
 use std::str::FromStr;
@@ -100,6 +99,7 @@ pub enum Expr {
 #[derive(PartialEq, Debug)]
 pub struct Declaration {
     name: String,
+    args: Vec<String>,
     value: Expr,
 }
 
@@ -142,6 +142,7 @@ fn parse_declaration<'a>(i: &'a str) -> IResult<&'a str, Declaration, VerboseErr
         buf,
         Declaration {
             name: name.to_string(),
+            args: args.iter().map(|x| x.to_string()).collect(),
             value,
         },
     ))
