@@ -13,7 +13,7 @@ use std::str::FromStr;
 use thiserror::Error;
 
 #[derive(PartialEq, Debug)]
-enum Literal {
+pub enum Literal {
     String(String),
     Float(f64),
     Integer(i64),
@@ -37,7 +37,7 @@ fn parse_op<'a>(i: &'a str) -> IResult<&'a str, Operator, VerboseError<&'a str>>
     ))
 }
 #[derive(PartialEq, Debug)]
-enum Operator {
+pub enum Operator {
     Plus,
     Minus,
     Multiply,
@@ -45,7 +45,7 @@ enum Operator {
 }
 
 fn parse_name<'a>(i: &'a str) -> IResult<&'a str, &'a str, VerboseError<&'a str>> {
-    context("function name", alpha1)(i)
+    context("name", alpha1)(i)
 }
 
 fn recognize_base10_int<'a>(input: &'a str) -> IResult<&'a str, &'a str, VerboseError<&'a str>> {
@@ -84,7 +84,7 @@ fn parse_op_exp<'a>(i: &'a str) -> IResult<&'a str, Expr, VerboseError<&'a str>>
     ))
 }
 #[derive(PartialEq, Debug)]
-enum Expr {
+pub enum Expr {
     FuncApp {
         func_name: String,
         args: Vec<Expr>,
@@ -98,13 +98,13 @@ enum Expr {
 }
 
 #[derive(PartialEq, Debug)]
-struct Declaration {
+pub struct Declaration {
     name: String,
     value: Expr,
 }
 
 #[derive(PartialEq, Debug)]
-struct Program {
+pub struct Program {
     declarations: Vec<Declaration>,
 }
 
@@ -117,17 +117,24 @@ impl Program {
 }
 
 fn parse_program<'a>(i: &'a str) -> IResult<&'a str, Program, VerboseError<&'a str>> {
-    let (buf, declarations) = many1(parse_declaration)(i)?;
+    let (buf, declarations) = many1(delimited(multispace0, parse_declaration, multispace0))(i)?;
     Ok((buf, Program { declarations }))
 }
 
 fn parse_declaration<'a>(i: &'a str) -> IResult<&'a str, Declaration, VerboseError<&'a str>> {
-    let (buf, (name, _eq_sign, value)) = context(
+    let (buf, (name, args, _eq_sign, value)) = context(
         "declaration",
         tuple((
-            terminated(parse_name, multispace0),
-            terminated(char('='), multispace0),
-            parse_expr,
+            context("declaration name", terminated(parse_name, multispace0)),
+            context(
+                "declaration args",
+                many0(terminated(parse_name, multispace0)),
+            ),
+            context(
+                "declaration equals sign",
+                terminated(char('='), multispace0),
+            ),
+            context("declaration rhs", parse_expr),
         )),
     )(i)?;
 
@@ -174,14 +181,16 @@ fn parse_func_app<'a>(i: &'a str) -> IResult<&'a str, Expr, VerboseError<&'a str
         "function arguments",
         delimited(char('('), parse_func_args, char(')')),
     );
-    let (rest, (func_name, args)) =
-        context("function application", pair(parse_name, args_in_parens))(i)?;
+    let (rest, (func_name, args)) = context(
+        "function application",
+        pair(terminated(parse_name, multispace0), args_in_parens),
+    )(i)?;
 
     let func_name = func_name.to_string();
     Ok((rest, Expr::FuncApp { func_name, args }))
 }
 
-fn compile(input: &str) -> Result<Program, CompileError> {
+pub fn compile(input: &str) -> Result<Program, CompileError> {
     let (buf, prog) = parse_program(input)?;
     if !buf.is_empty() {
         return Err(CompileError::ExtraneousInput(buf.to_string()));
@@ -192,14 +201,4 @@ fn compile(input: &str) -> Result<Program, CompileError> {
     Ok(prog)
 }
 
-fn main() {
-    let prog = "main = + 1 - func(2) 3";
-    let compiled = match compile(prog) {
-        Ok(o) => o,
-        Err(e) => {
-            println!("Compile error: {}", e);
-            return;
-        }
-    };
-    println!("{:#?}", compiled);
-}
+//fn main() {}
