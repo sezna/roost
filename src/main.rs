@@ -1,120 +1,205 @@
+use either::Either;
+use nom::{
+    branch::alt,
+    character::complete::{alpha1, char, multispace0, none_of, one_of},
+    combinator::{map, not, recognize},
+    error::{context, VerboseError},
+    multi::{many0, many1, separated_list0},
+    number::complete::recognize_float,
+    sequence::{delimited, pair, preceded, terminated, tuple},
+    IResult,
+};
+use std::str::FromStr;
+use thiserror::Error;
+
+#[derive(PartialEq, Debug)]
+enum Literal {
+    String(String),
+    Float(f64),
+    Integer(i64),
+}
+
+fn parse_op<'a>(i: &'a str) -> IResult<&'a str, Operator, VerboseError<&'a str>> {
+    // one_of matches one of the characters we give it
+    let (i, t) = terminated(one_of("+-*/"), multispace0)(i)?;
+
+    // because we are matching single character tokens, we can do the matching logic
+    // on the returned value
+    Ok((
+        i,
+        match t {
+            '+' => Operator::Plus,
+            '-' => Operator::Minus,
+            '*' => Operator::Multiply,
+            '/' => Operator::Divide,
+            _ => unreachable!(),
+        },
+    ))
+}
+#[derive(PartialEq, Debug)]
+enum Operator {
+    Plus,
+    Minus,
+    Multiply,
+    Divide,
+}
+
+fn parse_name<'a>(i: &'a str) -> IResult<&'a str, &'a str, VerboseError<&'a str>> {
+    context("function name", alpha1)(i)
+}
+
+fn recognize_base10_int<'a>(input: &'a str) -> IResult<&'a str, &'a str, VerboseError<&'a str>> {
+    recognize(tuple((
+        many1(one_of("0123456789")),
+        not(alt((char('.'), char('e')))),
+    )))(input)
+}
+
+fn parse_int<'a>(i: &'a str) -> IResult<&'a str, Expr, VerboseError<&'a str>> {
+    let (buff, res) = map(recognize_base10_int, |x| i64::from_str(x).unwrap())(i)?;
+    Ok((buff, Expr::Constant(Literal::Integer(res))))
+}
+fn parse_float<'a>(i: &'a str) -> IResult<&'a str, Expr, VerboseError<&'a str>> {
+    let (buff, res) = map(recognize_float, |x| f64::from_str(x).unwrap())(i)?;
+    Ok((buff, Expr::Constant(Literal::Float(res))))
+}
+fn parse_string<'a>(i: &'a str) -> IResult<&'a str, Expr, VerboseError<&'a str>> {
+    let double_quoted_string = delimited(char('"'), many0(none_of("\"")), char('"'));
+    let single_quoted_string = delimited(char('\''), many0(none_of("'")), char('\''));
+    let (buf, res) = context("string", alt((double_quoted_string, single_quoted_string)))(i)?;
+    Ok((buf, Expr::Constant(Literal::String(res.iter().collect()))))
+}
+fn parse_constant<'a>(i: &'a str) -> IResult<&'a str, Expr, VerboseError<&'a str>> {
+    context("constant", alt((parse_int, parse_float, parse_string)))(i)
+}
+fn parse_op_exp<'a>(i: &'a str) -> IResult<&'a str, Expr, VerboseError<&'a str>> {
+    let (buf, (op, lhs, rhs)) = context("op expr", tuple((parse_op, parse_expr, parse_expr)))(i)?;
+    Ok((
+        buf,
+        Expr::OpExp {
+            lhs: Box::new(lhs),
+            rhs: Box::new(rhs),
+            op,
+        },
+    ))
+}
+#[derive(PartialEq, Debug)]
+enum Expr {
+    FuncApp {
+        func_name: String,
+        args: Vec<Expr>,
+    },
+    Constant(Literal),
+    OpExp {
+        lhs: Box<Expr>,
+        rhs: Box<Expr>,
+        op: Operator,
+    },
+}
+
+#[derive(PartialEq, Debug)]
+struct Declaration {
+    name: String,
+    value: Expr,
+}
+
+#[derive(PartialEq, Debug)]
+struct Program {
+    declarations: Vec<Declaration>,
+}
+
+impl Program {
+    fn contains_main_function(&self) -> bool {
+        self.declarations
+            .iter()
+            .any(|x| x.name == String::from("main"))
+    }
+}
+
+fn parse_program<'a>(i: &'a str) -> IResult<&'a str, Program, VerboseError<&'a str>> {
+    let (buf, declarations) = many1(parse_declaration)(i)?;
+    Ok((buf, Program { declarations }))
+}
+
+fn parse_declaration<'a>(i: &'a str) -> IResult<&'a str, Declaration, VerboseError<&'a str>> {
+    let (buf, (name, _eq_sign, value)) = context(
+        "declaration",
+        tuple((
+            terminated(parse_name, multispace0),
+            terminated(char('='), multispace0),
+            parse_expr,
+        )),
+    )(i)?;
+
+    Ok((
+        buf,
+        Declaration {
+            name: name.to_string(),
+            value,
+        },
+    ))
+}
+
+#[derive(Debug, Error)]
+pub enum CompileError {
+    #[error("Unrecognized function: \"{0}\"")]
+    UnrecognizedFunction(String),
+    #[error("Parse error, verbose stack dump: \n{0}\n")]
+    ParseError(String),
+    #[error("No main function found.")]
+    MissingMainFunction,
+    #[error("Program contained extraneous input: {0}")]
+    ExtraneousInput(String),
+}
+
+impl std::convert::From<nom::Err<VerboseError<&str>>> for CompileError {
+    fn from(o: nom::Err<VerboseError<&str>>) -> Self {
+        CompileError::ParseError(format!("{:#?}", o))
+    }
+}
+fn parse_expr<'a>(i: &'a str) -> IResult<&'a str, Expr, VerboseError<&'a str>> {
+    context(
+        "expression",
+        terminated(
+            alt((parse_func_app, parse_op_exp, parse_constant)),
+            multispace0,
+        ),
+    )(i)
+}
+fn parse_func_args<'a>(i: &'a str) -> IResult<&'a str, Vec<Expr>, VerboseError<&'a str>> {
+    separated_list0(pair(char(','), multispace0), parse_expr)(i)
+}
+fn parse_func_app<'a>(i: &'a str) -> IResult<&'a str, Expr, VerboseError<&'a str>> {
+    let args_in_parens = context(
+        "function arguments",
+        delimited(char('('), parse_func_args, char(')')),
+    );
+    let (rest, (func_name, args)) =
+        context("function application", pair(parse_name, args_in_parens))(i)?;
+
+    let func_name = func_name.to_string();
+    Ok((rest, Expr::FuncApp { func_name, args }))
+}
+
+fn compile(input: &str) -> Result<Program, CompileError> {
+    let (buf, prog) = parse_program(input)?;
+    if !buf.is_empty() {
+        return Err(CompileError::ExtraneousInput(buf.to_string()));
+    }
+    if !prog.contains_main_function() {
+        return Err(CompileError::MissingMainFunction);
+    }
+    Ok(prog)
+}
+
 fn main() {
-    println!("Hello, world!");
-}
-
-type ParseError = String;
-type ParseResult<T> = Result<T, ParseError>;
-type MaybeParse<'a> = Option<(Token<'a>, &'a [char], usize)>;
-type Tokens<'a> = Vec<Token<'a>>;
-
-const VALID_NAME_CHARS: &[char] = &[
-    'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's',
-    't', 'u', 'v', 'w', 'x', 'y', 'z', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L',
-    'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z',
-];
-
-#[derive(Debug)]
-struct Token<'a> {
-    span: (usize, usize),
-    value: TokenType<'a>,
-}
-
-#[derive(Debug)]
-enum TokenType<'a> {
-    Operator(&'a char),
-    VariableName(&'a [char]),
-}
-
-struct GrammarEntry {
-    parsing_function: fn(&[char], usize) -> MaybeParse,
-    name: &'static str,
-}
-
-const GRAMMAR: &[GrammarEntry] = &[
-    GrammarEntry {
-        name: "Operator",
-        parsing_function: parse_operator,
-    },
-    GrammarEntry {
-        name: "Variable",
-        parsing_function: parse_variable,
-    },
-];
-
-fn parse_operator<'a>(a: &'a [char], starting_index: usize) -> MaybeParse<'a> {
-    assert!(a.len() > 0);
-    let tok = TokenType::Operator(match a[0] {
-        ref v @ '+' => v,
-        ref v @ '-' => v,
-        _ => return None,
-    });
-    let tok = Token {
-        span: (starting_index, starting_index + 1),
-        value: tok,
+    let prog = "main = + 1 - func(2) 3";
+    let compiled = match compile(prog) {
+        Ok(o) => o,
+        Err(e) => {
+            println!("Compile error: {}", e);
+            return;
+        }
     };
-
-    Some((tok, &a[1..], starting_index + 1))
-}
-
-fn parse_variable<'a>(a: &'a [char], starting_index: usize) -> MaybeParse<'a> {
-    assert!(a.len() > 0);
-    dbg!(&a);
-    for i in 1..=a.len() {
-        if (!VALID_NAME_CHARS.contains(&a[i - 1]) || i == a.len()) {
-            let (var_name, remaining_chars) = a.split_at(i);
-            let tok = TokenType::VariableName(var_name);
-            let tok = Token {
-                span: (starting_index, starting_index + var_name.len()),
-                value: tok,
-            };
-            return Some((tok, remaining_chars, starting_index + var_name.len()));
-        }
-    }
-
-    None
-}
-
-fn parse<'a>(input: &'a [char]) -> Result<Tokens, ParseError> {
-    let mut tok_buf = Vec::new();
-    let mut input_buf = input.clone();
-    let mut idx = 0;
-    while !input_buf.is_empty() {
-        let (input, new_idx) = strip_whitespace(input, idx);
-        idx = new_idx;
-        let (parsed, remaining_chars, new_idx) = if let Some(o) = try_parse(input_buf, idx) {
-            o
-        } else {
-            return Err(format!("Error at index {}", idx));
-        };
-        idx = new_idx;
-        tok_buf.push(parsed);
-        input_buf = remaining_chars;
-    }
-
-    Ok(tok_buf)
-}
-
-fn try_parse<'a>(input: &'a [char], idx: usize) -> MaybeParse {
-    for entry in GRAMMAR {
-        if let o @ Some(_) = (entry.parsing_function)(input, idx) {
-            return o;
-        }
-    }
-    None
-}
-
-fn strip_whitespace<'a>(a: &'a [char], idx: usize) -> (&'a [char], usize) {
-    for i in 1..a.len() {
-        if ![' ', '\t', '\n'].contains(&a[i]) {
-            return (a.split_at(i - 1).1, idx + i);
-        }
-    }
-    (&[], a.len())
-}
-
-#[test]
-fn test_parse_variable_operator() {
-    let prog = "abc+ def".chars().collect::<Vec<_>>();
-    let prog = parse(&prog.as_slice()).unwrap();
-    assert_eq!(prog.len(), 3);
+    println!("{:#?}", compiled);
 }
