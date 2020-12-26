@@ -243,7 +243,7 @@ fn parse_func_app<'a>(i: &'a str) -> IResult<&'a str, TypedExpr, VerboseError<&'
     )(i)?;
 
     let func_name = func_name.to_string();
-    // TODO function return types based on lookup table from functoin declarations
+    // TODO function return types based on lookup table from function declarations
     Ok((
         rest,
         TypedExpr {
@@ -261,6 +261,8 @@ pub fn compile(input: &str) -> Result<Program, CompileError> {
     if !prog.contains_main_function() {
         return Err(CompileError::MissingMainFunction);
     }
+    // TODO: validate all function applications and resolve their `Unknown` return types
+    //
     Ok(prog)
 }
 
