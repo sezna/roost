@@ -8,6 +8,7 @@ use nom::{
     sequence::{delimited, pair, terminated, tuple},
     IResult,
 };
+use std::collections::HashMap;
 use std::str::FromStr;
 use thiserror::Error;
 
@@ -35,7 +36,7 @@ fn parse_op<'a>(i: &'a str) -> IResult<&'a str, Operator, VerboseError<&'a str>>
         },
     ))
 }
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Clone, Copy)]
 pub enum Operator {
     Plus,
     Minus,
@@ -54,31 +55,69 @@ fn recognize_base10_int<'a>(input: &'a str) -> IResult<&'a str, &'a str, Verbose
     )))(input)
 }
 
-fn parse_int<'a>(i: &'a str) -> IResult<&'a str, Expr, VerboseError<&'a str>> {
+fn parse_int<'a>(i: &'a str) -> IResult<&'a str, TypedExpr, VerboseError<&'a str>> {
     let (buff, res) = map(recognize_base10_int, |x| i64::from_str(x).unwrap())(i)?;
-    Ok((buff, Expr::Constant(Literal::Integer(res))))
+    Ok((
+        buff,
+        TypedExpr {
+            expr: Expr::Constant(Literal::Integer(res)),
+            return_type: Type::Integer,
+        },
+    ))
 }
-fn parse_float<'a>(i: &'a str) -> IResult<&'a str, Expr, VerboseError<&'a str>> {
+fn parse_float<'a>(i: &'a str) -> IResult<&'a str, TypedExpr, VerboseError<&'a str>> {
     let (buff, res) = map(recognize_float, |x| f64::from_str(x).unwrap())(i)?;
-    Ok((buff, Expr::Constant(Literal::Float(res))))
+    Ok((
+        buff,
+        TypedExpr {
+            expr: Expr::Constant(Literal::Float(res)),
+            return_type: Type::Float,
+        },
+    ))
 }
-fn parse_string<'a>(i: &'a str) -> IResult<&'a str, Expr, VerboseError<&'a str>> {
+fn parse_string<'a>(i: &'a str) -> IResult<&'a str, TypedExpr, VerboseError<&'a str>> {
     let double_quoted_string = delimited(char('"'), many0(none_of("\"")), char('"'));
     let single_quoted_string = delimited(char('\''), many0(none_of("'")), char('\''));
     let (buf, res) = context("string", alt((double_quoted_string, single_quoted_string)))(i)?;
-    Ok((buf, Expr::Constant(Literal::String(res.iter().collect()))))
-}
-fn parse_constant<'a>(i: &'a str) -> IResult<&'a str, Expr, VerboseError<&'a str>> {
-    context("constant", alt((parse_int, parse_float, parse_string)))(i)
-}
-fn parse_op_exp<'a>(i: &'a str) -> IResult<&'a str, Expr, VerboseError<&'a str>> {
-    let (buf, (op, lhs, rhs)) = context("op expr", tuple((parse_op, parse_expr, parse_expr)))(i)?;
     Ok((
         buf,
-        Expr::OpExp {
-            lhs: Box::new(lhs),
-            rhs: Box::new(rhs),
-            op,
+        TypedExpr {
+            expr: Expr::Constant(Literal::String(res.iter().collect())),
+            return_type: Type::String,
+        },
+    ))
+}
+fn parse_constant<'a>(i: &'a str) -> IResult<&'a str, TypedExpr, VerboseError<&'a str>> {
+    context("constant", alt((parse_int, parse_float, parse_string)))(i)
+}
+
+fn op_type_lookup(lhs: &TypedExpr, rhs: &TypedExpr, op: Operator) -> Type {
+    use Operator::*;
+    use Type::*;
+    match (op, lhs.return_type, rhs.return_type) {
+        (Divide, Integer, Integer)
+        | (Divide, Float, Integer)
+        | (Divide, Integer, Float)
+        | (Multiply, Float, Integer)
+        | (Multiply, Integer, Float) => Float,
+        (Multiply, String, Integer) | (Multiply, Integer, String) => String,
+        (_, l, r) if l == r => l,
+        _ => Unknown,
+    }
+}
+
+fn parse_op_exp<'a>(i: &'a str) -> IResult<&'a str, TypedExpr, VerboseError<&'a str>> {
+    let (buf, (op, lhs, rhs)) = context("op expr", tuple((parse_op, parse_expr, parse_expr)))(i)?;
+    let calculated_return_type = op_type_lookup(&lhs, &rhs, op);
+    Ok((
+        buf,
+        TypedExpr {
+            expr: Expr::OpExp {
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+                op,
+            },
+            return_type: calculated_return_type,
         },
     ))
 }
@@ -86,38 +125,54 @@ fn parse_op_exp<'a>(i: &'a str) -> IResult<&'a str, Expr, VerboseError<&'a str>>
 pub enum Expr {
     FuncApp {
         func_name: String,
-        args: Vec<Expr>,
+        args: Vec<TypedExpr>,
     },
     Constant(Literal),
     OpExp {
-        lhs: Box<Expr>,
-        rhs: Box<Expr>,
+        lhs: Box<TypedExpr>,
+        rhs: Box<TypedExpr>,
         op: Operator,
     },
 }
 
 #[derive(PartialEq, Debug)]
+pub struct TypedExpr {
+    expr: Expr,
+    pub return_type: Type,
+}
+
+#[derive(PartialEq, Clone, Copy, Debug)]
+pub enum Type {
+    String,
+    Integer,
+    Float,
+    Unknown,
+}
+#[derive(PartialEq, Debug)]
 pub struct Declaration {
     name: String,
     args: Vec<String>,
-    value: Expr,
+    pub value: TypedExpr,
 }
 
 #[derive(PartialEq, Debug)]
 pub struct Program {
-    declarations: Vec<Declaration>,
+    pub declarations: HashMap<String, Declaration>,
 }
 
 impl Program {
     fn contains_main_function(&self) -> bool {
-        self.declarations
-            .iter()
-            .any(|x| x.name == String::from("main"))
+        self.declarations.get("main").is_some()
     }
 }
 
 fn parse_program<'a>(i: &'a str) -> IResult<&'a str, Program, VerboseError<&'a str>> {
-    let (buf, declarations) = many1(delimited(multispace0, parse_declaration, multispace0))(i)?;
+    let (buf, declarations_vec) = many1(delimited(multispace0, parse_declaration, multispace0))(i)?;
+    let mut declarations = HashMap::default();
+    declarations_vec.into_iter().for_each(|decl| {
+        // TODO don't store the names twice
+        declarations.insert(decl.name.clone(), decl);
+    });
     Ok((buf, Program { declarations }))
 }
 
@@ -165,7 +220,7 @@ impl std::convert::From<nom::Err<VerboseError<&str>>> for CompileError {
         CompileError::ParseError(format!("{:#?}", o))
     }
 }
-fn parse_expr<'a>(i: &'a str) -> IResult<&'a str, Expr, VerboseError<&'a str>> {
+fn parse_expr<'a>(i: &'a str) -> IResult<&'a str, TypedExpr, VerboseError<&'a str>> {
     context(
         "expression",
         terminated(
@@ -174,10 +229,10 @@ fn parse_expr<'a>(i: &'a str) -> IResult<&'a str, Expr, VerboseError<&'a str>> {
         ),
     )(i)
 }
-fn parse_func_args<'a>(i: &'a str) -> IResult<&'a str, Vec<Expr>, VerboseError<&'a str>> {
+fn parse_func_args<'a>(i: &'a str) -> IResult<&'a str, Vec<TypedExpr>, VerboseError<&'a str>> {
     separated_list0(pair(char(','), multispace0), parse_expr)(i)
 }
-fn parse_func_app<'a>(i: &'a str) -> IResult<&'a str, Expr, VerboseError<&'a str>> {
+fn parse_func_app<'a>(i: &'a str) -> IResult<&'a str, TypedExpr, VerboseError<&'a str>> {
     let args_in_parens = context(
         "function arguments",
         delimited(char('('), parse_func_args, char(')')),
@@ -188,7 +243,14 @@ fn parse_func_app<'a>(i: &'a str) -> IResult<&'a str, Expr, VerboseError<&'a str
     )(i)?;
 
     let func_name = func_name.to_string();
-    Ok((rest, Expr::FuncApp { func_name, args }))
+    // TODO function return types based on lookup table from functoin declarations
+    Ok((
+        rest,
+        TypedExpr {
+            expr: Expr::FuncApp { func_name, args },
+            return_type: Type::Unknown,
+        },
+    ))
 }
 
 pub fn compile(input: &str) -> Result<Program, CompileError> {
