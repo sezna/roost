@@ -1,3 +1,18 @@
+// there will be a sort of statically-typed but dynamically-feeling type system in the functions
+// unknown types are evaluated lazily, at do not define the type of a function. instead, if a
+// function has an unknown type, as long as the functions it is called with are actually compatible
+// with the function itself, it will be statically verified.
+//
+// i.e.
+//
+// myfunc x y = x * y
+//
+// myfunc(10, 2) // OK, b/c integer * integer is ok, return type is integer
+// myfunc("hello", 1) // OK b/c integer * string is ok, return type is string
+// myfunc("hi", "yes") // err at compile time: can't multiply string and string
+//
+// static typing but inferred polymorphism
+
 use nom::{
     branch::alt,
     character::complete::{alpha1, char, multispace0, none_of, one_of},
@@ -55,23 +70,27 @@ fn recognize_base10_int<'a>(input: &'a str) -> IResult<&'a str, &'a str, Verbose
     )))(input)
 }
 
+// TODO parse suffix type ascriptions, i.e. 10u32 or 10usize
 fn parse_int<'a>(i: &'a str) -> IResult<&'a str, TypedExpr, VerboseError<&'a str>> {
     let (buff, res) = map(recognize_base10_int, |x| i64::from_str(x).unwrap())(i)?;
     Ok((
         buff,
         TypedExpr {
             expr: Expr::Constant(Literal::Integer(res)),
-            return_type: Type::Integer,
+            return_type: Type::SignedInteger(IntegerBits::ThirtyTwo),
         },
     ))
 }
+
+// TODO: parse f64 and f32 as suffix type ascriptions, like in rust
+// i.e. 1.3f64
 fn parse_float<'a>(i: &'a str) -> IResult<&'a str, TypedExpr, VerboseError<&'a str>> {
     let (buff, res) = map(recognize_float, |x| f64::from_str(x).unwrap())(i)?;
     Ok((
         buff,
         TypedExpr {
             expr: Expr::Constant(Literal::Float(res)),
-            return_type: Type::Float,
+            return_type: Type::Float(FloatBits::SixtyFour),
         },
     ))
 }
@@ -94,13 +113,14 @@ fn parse_constant<'a>(i: &'a str) -> IResult<&'a str, TypedExpr, VerboseError<&'
 fn op_type_lookup(lhs: &TypedExpr, rhs: &TypedExpr, op: Operator) -> Type {
     use Operator::*;
     use Type::*;
+    // TODO not nearly even kind of exhaustive
     match (op, lhs.return_type, rhs.return_type) {
-        (Divide, Integer, Integer)
-        | (Divide, Float, Integer)
-        | (Divide, Integer, Float)
-        | (Multiply, Float, Integer)
-        | (Multiply, Integer, Float) => Float,
-        (Multiply, String, Integer) | (Multiply, Integer, String) => String,
+        (Divide, SignedInteger(_), SignedInteger(_))
+        | (Divide, Float(_), SignedInteger(_))
+        | (Divide, SignedInteger(_), Float(_))
+        | (Multiply, Float(_), SignedInteger(_))
+        | (Multiply, SignedInteger(_), Float(_)) => Float(FloatBits::SixtyFour),
+        (Multiply, String, SignedInteger(_)) | (Multiply, SignedInteger(_), String) => String,
         (_, l, r) if l == r => l,
         _ => Unknown,
     }
@@ -142,10 +162,27 @@ pub struct TypedExpr {
 }
 
 #[derive(PartialEq, Clone, Copy, Debug)]
+pub enum IntegerBits {
+    Eight,
+    Sixteen,
+    ThirtyTwo,
+    SixtyFour,
+    OneTwentyEight,
+    Arch,
+}
+
+#[derive(PartialEq, Clone, Copy, Debug)]
+pub enum FloatBits {
+    ThirtyTwo,
+    SixtyFour,
+}
+
+#[derive(PartialEq, Clone, Copy, Debug)]
 pub enum Type {
     String,
-    Integer,
-    Float,
+    SignedInteger(IntegerBits),
+    Float(FloatBits),
+    UnsignedInteger(IntegerBits),
     Unknown,
 }
 #[derive(PartialEq, Debug)]

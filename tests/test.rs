@@ -10,7 +10,7 @@ fn basic_prog_2() {
 myfunc a b = + 1 - func(2) 3
 main = myfunc (12, 13)"#;
     match compile(prog) {
-        Ok(_) => (),
+        Ok(o) => dbg!(o),
         Err(e) => {
             println!("{}", e);
             panic!()
