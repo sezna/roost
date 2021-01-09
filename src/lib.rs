@@ -114,7 +114,7 @@ fn op_type_lookup(lhs: &TypedExpr, rhs: &TypedExpr, op: Operator) -> Type {
     use Operator::*;
     use Type::*;
     // TODO not nearly even kind of exhaustive
-    match (op, lhs.return_type, rhs.return_type) {
+    match (op, lhs.return_type.clone(), rhs.return_type.clone()) {
         (Divide, SignedInteger(_), SignedInteger(_))
         | (Divide, Float(_), SignedInteger(_))
         | (Divide, SignedInteger(_), Float(_))
@@ -173,19 +173,18 @@ impl TypedExpr {
                 ref args,
             } => {
                 let mut cl = declarations.clone();
-                let mut return_type = declarations
-                    .get(func_name)
-                    .expect("Used an undefined function! return a result here instead of panicking")
-                    .value
-                    .return_type;
+                if let Some(Declaration::Expr { value, .. }) = declarations.get(func_name) {
+                    (
+                        TypedExpr {
+                            return_type: value.return_type.clone(),
+                            expr: self.expr.clone(),
+                        },
+                        self.return_type != value.return_type,
+                    )
+                } else {
+                    panic!("Used an undefined function! return a result here instead of panicking");
+                }
                 //                    func_decl.value.resolve_unknowns(&mut cl);
-                (
-                    TypedExpr {
-                        return_type,
-                        expr: self.expr.clone(),
-                    },
-                    self.return_type != return_type,
-                )
             }
             _ => ((self.clone(), false)),
         }
@@ -208,19 +207,43 @@ pub enum FloatBits {
     SixtyFour,
 }
 
-#[derive(PartialEq, Clone, Copy, Debug)]
+#[derive(PartialEq, Clone, Debug)]
 pub enum Type {
     String,
     SignedInteger(IntegerBits),
     Float(FloatBits),
     UnsignedInteger(IntegerBits),
+    Function(Vec<Type>), // curried type decl, last entry is return type
     Unknown,
 }
 #[derive(PartialEq, Debug, Clone)]
-pub struct Declaration {
+pub enum Declaration {
+    Expr {
+        name: String,
+        args: Vec<String>,
+        value: TypedExpr,
+    },
+    Trait {
+        name: String,
+        methods: Vec<TypeAnnotation>,
+    },
+    TypeAnnotation(TypeAnnotation),
+}
+
+impl Declaration {
+    fn name(&self) -> String {
+        match self {
+            Declaration::Expr { name, .. } => name.to_string(),
+            Declaration::Trait { name, .. } => name.to_string(),
+            Declaration::TypeAnnotation(TypeAnnotation { name, .. }) => name.to_string(),
+        }
+    }
+}
+
+#[derive(PartialEq, Debug, Clone)]
+pub struct TypeAnnotation {
     name: String,
-    args: Vec<String>,
-    pub value: TypedExpr,
+    r#type: Type,
 }
 
 #[derive(PartialEq, Debug)]
@@ -240,30 +263,35 @@ impl Program {
                 .declarations
                 .clone()
                 .into_iter()
-                .map(|(_, Declaration { args, name, value })| {
-                    let (value, were_changes) = value.resolve_unknowns(&self.declarations);
-                    (Declaration { args, name, value }, were_changes)
+                .map(|(_, decl)| {
+                    if let Declaration::Expr { name, args, value } = decl {
+                        let (value, were_changes) = value.resolve_unknowns(&self.declarations);
+                        (Declaration::Expr { args, name, value }, were_changes)
+                    } else {
+                        (decl, false)
+                    }
                 })
                 .collect::<Vec<_>>();
             for (decl, were_changes_2) in new_decls {
                 were_changes = were_changes || were_changes_2;
-                self.declarations.insert(decl.name.clone(), decl);
+                self.declarations.insert(decl.name(), decl);
             }
         }
     }
 }
 
 fn parse_program<'a>(i: &'a str) -> IResult<&'a str, Program, VerboseError<&'a str>> {
-    let (buf, declarations_vec) = many1(delimited(multispace0, parse_declaration, multispace0))(i)?;
+    let (buf, declarations_vec) =
+        many1(delimited(multispace0, parse_declaration_expr, multispace0))(i)?;
     let mut declarations = HashMap::default();
     declarations_vec.into_iter().for_each(|decl| {
         // TODO don't store the names twice
-        declarations.insert(decl.name.clone(), decl);
+        declarations.insert(decl.name(), decl);
     });
     Ok((buf, Program { declarations }))
 }
 
-fn parse_declaration<'a>(i: &'a str) -> IResult<&'a str, Declaration, VerboseError<&'a str>> {
+fn parse_declaration_expr<'a>(i: &'a str) -> IResult<&'a str, Declaration, VerboseError<&'a str>> {
     let (buf, (name, args, _eq_sign, value)) = context(
         "declaration",
         tuple((
@@ -282,7 +310,7 @@ fn parse_declaration<'a>(i: &'a str) -> IResult<&'a str, Declaration, VerboseErr
 
     Ok((
         buf,
-        Declaration {
+        Declaration::Expr {
             name: name.to_string(),
             args: args.iter().map(|x| x.to_string()).collect(),
             value,

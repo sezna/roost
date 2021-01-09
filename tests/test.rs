@@ -1,9 +1,11 @@
-use rost::{compile, FloatBits, Type};
+use rost::{compile, Declaration, FloatBits, IntegerBits, Type};
+
 #[test]
 fn basic_prog_1() {
     let prog = "main = + 1 - func(2) 3";
     compile(prog).unwrap();
 }
+
 #[test]
 fn basic_prog_2() {
     let prog = r#"
@@ -32,17 +34,14 @@ fn basic_return_type() {
             panic!()
         }
     };
-    assert_eq!(
-        prog.declarations.get("main").unwrap().value.return_type,
-        Type::String
+    check_type(prog.declarations.get("main"), Type::String);
+    check_type(
+        prog.declarations.get("myfunc"),
+        Type::Float(FloatBits::SixtyFour),
     );
-    assert_eq!(
-        prog.declarations.get("myfunc").unwrap().value.return_type,
-        Type::Float(FloatBits::SixtyFour)
-    );
-    assert_eq!(
-        prog.declarations.get("divfunc").unwrap().value.return_type,
-        Type::Float(FloatBits::SixtyFour)
+    check_type(
+        prog.declarations.get("divfunc"),
+        Type::Float(FloatBits::SixtyFour),
     );
 }
 
@@ -59,13 +58,13 @@ fn func_app_return_type() {
             panic!()
         }
     };
-    assert_eq!(
-        prog.declarations.get("divfunc").unwrap().value.return_type,
-        Type::Float(FloatBits::SixtyFour)
+    check_type(
+        prog.declarations.get("divfunc"),
+        Type::Float(FloatBits::SixtyFour),
     );
-    assert_eq!(
-        prog.declarations.get("main").unwrap().value.return_type,
-        Type::Float(FloatBits::SixtyFour)
+    check_type(
+        prog.declarations.get("main"),
+        Type::Float(FloatBits::SixtyFour),
     );
 }
 
@@ -104,8 +103,40 @@ fn func_app_return_type_3() {
             panic!()
         }
     };
+    check_type(
+        prog.declarations.get("main"),
+        Type::Float(FloatBits::SixtyFour),
+    );
+}
+
+#[test]
+fn parse_type_annotation() {
+    let prog = r#"
+    main :: i32
+    main = 10 + 2 
+    "#;
+
+    let prog = match compile(prog) {
+        Ok(o) => (o),
+        Err(e) => {
+            println!("{}", e);
+            panic!()
+        }
+    };
+
+    check_type(
+        prog.declarations.get("main"),
+        Type::Function(vec![Type::SignedInteger(IntegerBits::ThirtyTwo)]),
+    );
+}
+
+fn check_type(a: Option<&Declaration>, b: Type) {
     assert_eq!(
-        prog.declarations.get("main").unwrap().value.return_type,
-        Type::Float(FloatBits::SixtyFour)
+        if let Some(Declaration::Expr { value, .. }) = a {
+            Some(value.return_type.clone())
+        } else {
+            None
+        },
+        Some(b)
     );
 }
