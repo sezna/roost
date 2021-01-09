@@ -110,7 +110,7 @@ fn func_app_return_type_3() {
 }
 
 #[test]
-fn parse_type_annotation() {
+fn parse_type_annotation_1() {
     // should be able to handle upgrading types to higher precisions
     let prog = r#"
     main :: i64
@@ -127,7 +127,7 @@ fn parse_type_annotation() {
 
     check_type(
         prog.declarations.get("main"),
-        Type::Function(vec![Type::SignedInteger(IntegerBits::SixtyFour)]),
+        Type::SignedInteger(IntegerBits::SixtyFour),
     );
 }
 
@@ -149,7 +149,36 @@ fn parse_type_annotation_2() {
 
     check_type(
         prog.declarations.get("main"),
-        Type::Function(vec![Type::SignedInteger(IntegerBits::ThirtyTwo)]),
+        Type::Function(vec![
+            Type::SignedInteger(IntegerBits::ThirtyTwo),
+            Type::SignedInteger(IntegerBits::ThirtyTwo),
+        ]),
+    );
+}
+#[test]
+fn parse_type_annotation_3() {
+    let prog = r#"
+    otherfunc :: i64 => i32 => i32 => String
+    otherfunc x y z = "hello"
+    main = otherfunc(10, 2, 3)
+    "#;
+
+    let prog = match compile(prog) {
+        Ok(o) => (o),
+        Err(e) => {
+            println!("{}", e);
+            panic!()
+        }
+    };
+
+    check_type(
+        prog.declarations.get("main"),
+        Type::Function(vec![
+            Type::SignedInteger(IntegerBits::SixtyFour),
+            Type::SignedInteger(IntegerBits::ThirtyTwo),
+            Type::SignedInteger(IntegerBits::ThirtyTwo),
+            Type::String,
+        ]),
     );
 }
 

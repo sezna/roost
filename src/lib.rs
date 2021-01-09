@@ -302,6 +302,34 @@ impl Program {
             }
         }
     }
+    fn apply_type_annotations(&mut self) {
+        let annotations = self
+            .declarations
+            .clone()
+            .into_iter()
+            .filter_map(|(name, x)| {
+                if let Declaration::TypeAnnotation(annotation) = x {
+                    Some((name, annotation))
+                } else {
+                    None
+                }
+            });
+        for (_name, annotation) in annotations {
+            let to_update = self.declarations.get_mut(annotation.name.split(' ').collect::<Vec<_>>()[0]).expect("Annotated something that isn't declared -- TODO make this return result instead of panicking");
+            dbg!(&to_update);
+            match to_update {
+                Declaration::Expr { value, .. } => {
+                    // TODO: check if it already has a type, and then see if this type can override
+                    // it
+                    // i.e. i64 can override 132, f64 can override f32
+                    value.return_type = annotation.r#type;
+                }
+                _ => panic!(
+                    "TODO return result: tried to annotate something that cannot be annotated"
+                ),
+            }
+        }
+    }
 }
 
 fn parse_program<'a>(i: &'a str) -> IResult<&'a str, Program, VerboseError<&'a str>> {
@@ -365,7 +393,7 @@ fn parse_type_annotation<'a>(i: &'a str) -> IResult<&'a str, Declaration, Verbos
 
     let (name, _space1, _colon, _space2, args) = res;
     let annotation = TypeAnnotation {
-        name: name.to_string(),
+        name: format!("{} type", name),
         r#type: Type::from_vec_string(args),
     };
 
@@ -442,6 +470,7 @@ pub fn compile(input: &str) -> Result<Program, CompileError> {
     if !prog.contains_main_function() {
         return Err(CompileError::MissingMainFunction);
     }
+    prog.apply_type_annotations();
     // TODO: validate all function applications and resolve their `Unknown` return types
     prog.resolve_unknowns();
 
