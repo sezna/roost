@@ -18,7 +18,7 @@ use nom::{
     character::complete::{alpha1, char, multispace0, none_of, one_of},
     combinator::{map, not, recognize},
     error::{context, VerboseError},
-    multi::{many0, many1, separated_list0},
+    multi::{many0, many1, separated_list0, separated_list1},
     number::complete::recognize_float,
     sequence::{delimited, pair, terminated, tuple},
     IResult,
@@ -315,6 +315,16 @@ fn parse_declaration_expr<'a>(i: &'a str) -> IResult<&'a str, Declaration, Verbo
             args: args.iter().map(|x| x.to_string()).collect(),
             value,
         },
+    ))
+}
+
+fn parse_type_annotation<'a>(i: &'a str) -> IResult<&'a str, Program, VerboseError<&'a str>> {
+    tuple((
+        context("skinny arrow", tuple((char('='), char('>')))),
+        context(
+            "type args",
+            separated_list1(pair(char(','), multispace0), parse_expr),
+        ),
     ))
 }
 

@@ -130,6 +130,28 @@ fn parse_type_annotation() {
     );
 }
 
+#[test]
+fn parse_type_annotation() {
+    let prog = r#"
+    otherfunc :: i32 => i32
+    otherfunc x = x + 2
+    main = otherfunc 10
+    "#;
+
+    let prog = match compile(prog) {
+        Ok(o) => (o),
+        Err(e) => {
+            println!("{}", e);
+            panic!()
+        }
+    };
+
+    check_type(
+        prog.declarations.get("main"),
+        Type::Function(vec![Type::SignedInteger(IntegerBits::ThirtyTwo)]),
+    );
+}
+
 fn check_type(a: Option<&Declaration>, b: Type) {
     assert_eq!(
         if let Some(Declaration::Expr { value, .. }) = a {
