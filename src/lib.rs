@@ -27,7 +27,7 @@ use std::collections::HashMap;
 use std::str::FromStr;
 use thiserror::Error;
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Clone)]
 pub enum Literal {
     String(String),
     Float(f64),
@@ -141,7 +141,7 @@ fn parse_op_exp<'a>(i: &'a str) -> IResult<&'a str, TypedExpr, VerboseError<&'a 
         },
     ))
 }
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Clone)]
 pub enum Expr {
     FuncApp {
         func_name: String,
@@ -153,12 +153,43 @@ pub enum Expr {
         rhs: Box<TypedExpr>,
         op: Operator,
     },
+    // just a name that gets looked up in the namespace, with precedence to locally scoped vars
+    VarExp(String),
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Clone)]
 pub struct TypedExpr {
     expr: Expr,
     pub return_type: Type,
+}
+
+impl TypedExpr {
+    fn resolve_unknowns(&self, declarations: &HashMap<String, Declaration>) -> (TypedExpr, bool) {
+        // if there is a function application with a known return type, then we can propagate that
+        // out
+        match self.expr {
+            Expr::FuncApp {
+                ref func_name,
+                ref args,
+            } => {
+                let mut cl = declarations.clone();
+                let mut return_type = declarations
+                    .get(func_name)
+                    .expect("Used an undefined function! return a result here instead of panicking")
+                    .value
+                    .return_type;
+                //                    func_decl.value.resolve_unknowns(&mut cl);
+                (
+                    TypedExpr {
+                        return_type,
+                        expr: self.expr.clone(),
+                    },
+                    self.return_type != return_type,
+                )
+            }
+            _ => ((self.clone(), false)),
+        }
+    }
 }
 
 #[derive(PartialEq, Clone, Copy, Debug)]
@@ -185,7 +216,7 @@ pub enum Type {
     UnsignedInteger(IntegerBits),
     Unknown,
 }
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Clone)]
 pub struct Declaration {
     name: String,
     args: Vec<String>,
@@ -200,6 +231,25 @@ pub struct Program {
 impl Program {
     fn contains_main_function(&self) -> bool {
         self.declarations.get("main").is_some()
+    }
+    fn resolve_unknowns(&mut self) {
+        let mut were_changes = true;
+        while were_changes {
+            were_changes = false;
+            let new_decls = self
+                .declarations
+                .clone()
+                .into_iter()
+                .map(|(_, Declaration { args, name, value })| {
+                    let (value, were_changes) = value.resolve_unknowns(&self.declarations);
+                    (Declaration { args, name, value }, were_changes)
+                })
+                .collect::<Vec<_>>();
+            for (decl, were_changes_2) in new_decls {
+                were_changes = were_changes || were_changes_2;
+                self.declarations.insert(decl.name.clone(), decl);
+            }
+        }
     }
 }
 
@@ -257,11 +307,23 @@ impl std::convert::From<nom::Err<VerboseError<&str>>> for CompileError {
         CompileError::ParseError(format!("{:#?}", o))
     }
 }
+
+fn parse_var_expr<'a>(i: &'a str) -> IResult<&'a str, TypedExpr, VerboseError<&'a str>> {
+    let (buf, res) = parse_name(i)?;
+    Ok((
+        buf,
+        TypedExpr {
+            expr: Expr::VarExp(res.into()),
+            return_type: Type::Unknown,
+        },
+    ))
+}
+
 fn parse_expr<'a>(i: &'a str) -> IResult<&'a str, TypedExpr, VerboseError<&'a str>> {
     context(
         "expression",
         terminated(
-            alt((parse_func_app, parse_op_exp, parse_constant)),
+            alt((parse_func_app, parse_op_exp, parse_constant, parse_var_expr)),
             multispace0,
         ),
     )(i)
@@ -291,7 +353,7 @@ fn parse_func_app<'a>(i: &'a str) -> IResult<&'a str, TypedExpr, VerboseError<&'
 }
 
 pub fn compile(input: &str) -> Result<Program, CompileError> {
-    let (buf, prog) = parse_program(input)?;
+    let (buf, mut prog) = parse_program(input)?;
     if !buf.is_empty() {
         return Err(CompileError::ExtraneousInput(buf.to_string()));
     }
@@ -299,7 +361,8 @@ pub fn compile(input: &str) -> Result<Program, CompileError> {
         return Err(CompileError::MissingMainFunction);
     }
     // TODO: validate all function applications and resolve their `Unknown` return types
-    //
+    prog.resolve_unknowns();
+
     Ok(prog)
 }
 
