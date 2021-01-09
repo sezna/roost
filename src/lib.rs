@@ -15,10 +15,10 @@
 
 use nom::{
     branch::alt,
-    character::complete::{alpha1, char, multispace0, none_of, one_of},
+    character::complete::{alpha1, alphanumeric1, char, multispace0, none_of, one_of},
     combinator::{map, not, recognize},
     error::{context, VerboseError},
-    multi::{many0, many1, separated_list0},
+    multi::{many0, many1, separated_list0, separated_list1},
     number::complete::recognize_float,
     sequence::{delimited, pair, terminated, tuple},
     IResult,
@@ -60,7 +60,7 @@ pub enum Operator {
 }
 
 fn parse_name<'a>(i: &'a str) -> IResult<&'a str, &'a str, VerboseError<&'a str>> {
-    context("name", alpha1)(i)
+    context("name", alphanumeric1)(i)
 }
 
 fn recognize_base10_int<'a>(input: &'a str) -> IResult<&'a str, &'a str, VerboseError<&'a str>> {
@@ -114,7 +114,7 @@ fn op_type_lookup(lhs: &TypedExpr, rhs: &TypedExpr, op: Operator) -> Type {
     use Operator::*;
     use Type::*;
     // TODO not nearly even kind of exhaustive
-    match (op, lhs.return_type, rhs.return_type) {
+    match (op, lhs.return_type.clone(), rhs.return_type.clone()) {
         (Divide, SignedInteger(_), SignedInteger(_))
         | (Divide, Float(_), SignedInteger(_))
         | (Divide, SignedInteger(_), Float(_))
@@ -173,19 +173,18 @@ impl TypedExpr {
                 ref args,
             } => {
                 let mut cl = declarations.clone();
-                let mut return_type = declarations
-                    .get(func_name)
-                    .expect("Used an undefined function! return a result here instead of panicking")
-                    .value
-                    .return_type;
+                if let Some(Declaration::Expr { value, .. }) = declarations.get(func_name) {
+                    (
+                        TypedExpr {
+                            return_type: value.return_type.clone(),
+                            expr: self.expr.clone(),
+                        },
+                        self.return_type != value.return_type,
+                    )
+                } else {
+                    panic!("Used an undefined function! return a result here instead of panicking");
+                }
                 //                    func_decl.value.resolve_unknowns(&mut cl);
-                (
-                    TypedExpr {
-                        return_type,
-                        expr: self.expr.clone(),
-                    },
-                    self.return_type != return_type,
-                )
             }
             _ => ((self.clone(), false)),
         }
@@ -208,19 +207,67 @@ pub enum FloatBits {
     SixtyFour,
 }
 
-#[derive(PartialEq, Clone, Copy, Debug)]
+#[derive(PartialEq, Clone, Debug)]
 pub enum Type {
     String,
     SignedInteger(IntegerBits),
     Float(FloatBits),
     UnsignedInteger(IntegerBits),
+    Function(Vec<Type>),      // curried type decl, last entry is return type
+    Generic { name: String }, // generic/polymorphic type params
     Unknown,
 }
+
+impl Type {
+    fn from_vec_string(args: Vec<&str>) -> Type {
+        let args = args
+            .into_iter()
+            .map(|x| match x {
+                "String" => Type::String,
+                "i32" => Type::SignedInteger(IntegerBits::ThirtyTwo),
+                "i64" => Type::SignedInteger(IntegerBits::SixtyFour),
+                other => Type::Generic {
+                    name: other.to_string(),
+                }, /* TODO rest of types */
+            })
+            .collect::<Vec<_>>();
+
+        if args.len() == 1 {
+            args[0].clone()
+        } else {
+            Type::Function(args)
+        }
+    }
+}
+
 #[derive(PartialEq, Debug, Clone)]
-pub struct Declaration {
+pub enum Declaration {
+    Expr {
+        name: String,
+        args: Vec<String>,
+        value: TypedExpr,
+    },
+    Trait {
+        name: String,
+        methods: Vec<TypeAnnotation>,
+    },
+    TypeAnnotation(TypeAnnotation),
+}
+
+impl Declaration {
+    fn name(&self) -> String {
+        match self {
+            Declaration::Expr { name, .. } => name.to_string(),
+            Declaration::Trait { name, .. } => name.to_string(),
+            Declaration::TypeAnnotation(TypeAnnotation { name, .. }) => name.to_string(),
+        }
+    }
+}
+
+#[derive(PartialEq, Debug, Clone)]
+pub struct TypeAnnotation {
     name: String,
-    args: Vec<String>,
-    pub value: TypedExpr,
+    r#type: Type,
 }
 
 #[derive(PartialEq, Debug)]
@@ -240,30 +287,66 @@ impl Program {
                 .declarations
                 .clone()
                 .into_iter()
-                .map(|(_, Declaration { args, name, value })| {
-                    let (value, were_changes) = value.resolve_unknowns(&self.declarations);
-                    (Declaration { args, name, value }, were_changes)
+                .map(|(_, decl)| {
+                    if let Declaration::Expr { name, args, value } = decl {
+                        let (value, were_changes) = value.resolve_unknowns(&self.declarations);
+                        (Declaration::Expr { args, name, value }, were_changes)
+                    } else {
+                        (decl, false)
+                    }
                 })
                 .collect::<Vec<_>>();
             for (decl, were_changes_2) in new_decls {
                 were_changes = were_changes || were_changes_2;
-                self.declarations.insert(decl.name.clone(), decl);
+                self.declarations.insert(decl.name(), decl);
+            }
+        }
+    }
+    fn apply_type_annotations(&mut self) {
+        let annotations = self
+            .declarations
+            .clone()
+            .into_iter()
+            .filter_map(|(name, x)| {
+                if let Declaration::TypeAnnotation(annotation) = x {
+                    Some((name, annotation))
+                } else {
+                    None
+                }
+            });
+        for (_name, annotation) in annotations {
+            let to_update = self.declarations.get_mut(annotation.name.split(' ').collect::<Vec<_>>()[0]).expect("Annotated something that isn't declared -- TODO make this return result instead of panicking");
+            dbg!(&to_update);
+            match to_update {
+                Declaration::Expr { value, .. } => {
+                    // TODO: check if it already has a type, and then see if this type can override
+                    // it
+                    // i.e. i64 can override 132, f64 can override f32
+                    value.return_type = annotation.r#type;
+                }
+                _ => panic!(
+                    "TODO return result: tried to annotate something that cannot be annotated"
+                ),
             }
         }
     }
 }
 
 fn parse_program<'a>(i: &'a str) -> IResult<&'a str, Program, VerboseError<&'a str>> {
-    let (buf, declarations_vec) = many1(delimited(multispace0, parse_declaration, multispace0))(i)?;
+    let (buf, declarations_vec) = many1(delimited(
+        multispace0,
+        alt((parse_type_annotation, parse_declaration_expr)),
+        multispace0,
+    ))(i)?;
     let mut declarations = HashMap::default();
     declarations_vec.into_iter().for_each(|decl| {
         // TODO don't store the names twice
-        declarations.insert(decl.name.clone(), decl);
+        declarations.insert(decl.name(), decl);
     });
     Ok((buf, Program { declarations }))
 }
 
-fn parse_declaration<'a>(i: &'a str) -> IResult<&'a str, Declaration, VerboseError<&'a str>> {
+fn parse_declaration_expr<'a>(i: &'a str) -> IResult<&'a str, Declaration, VerboseError<&'a str>> {
     let (buf, (name, args, _eq_sign, value)) = context(
         "declaration",
         tuple((
@@ -282,12 +365,39 @@ fn parse_declaration<'a>(i: &'a str) -> IResult<&'a str, Declaration, VerboseErr
 
     Ok((
         buf,
-        Declaration {
+        Declaration::Expr {
             name: name.to_string(),
             args: args.iter().map(|x| x.to_string()).collect(),
             value,
         },
     ))
+}
+
+fn parse_type_annotation<'a>(i: &'a str) -> IResult<&'a str, Declaration, VerboseError<&'a str>> {
+    let (buf, res) = tuple((
+        context("type annotation name", parse_name),
+        multispace0,
+        context("double colon", tuple((char(':'), char(':')))),
+        multispace0,
+        context(
+            "type args",
+            separated_list1(
+                context(
+                    "skinny arrow",
+                    tuple((multispace0, char('='), char('>'), multispace0)),
+                ),
+                parse_name,
+            ),
+        ),
+    ))(i)?;
+
+    let (name, _space1, _colon, _space2, args) = res;
+    let annotation = TypeAnnotation {
+        name: format!("{} type", name),
+        r#type: Type::from_vec_string(args),
+    };
+
+    Ok((buf, Declaration::TypeAnnotation(annotation)))
 }
 
 #[derive(Debug, Error)]
@@ -360,6 +470,7 @@ pub fn compile(input: &str) -> Result<Program, CompileError> {
     if !prog.contains_main_function() {
         return Err(CompileError::MissingMainFunction);
     }
+    prog.apply_type_annotations();
     // TODO: validate all function applications and resolve their `Unknown` return types
     prog.resolve_unknowns();
 
