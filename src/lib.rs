@@ -19,9 +19,10 @@ use nom::{
     combinator::{map, not, recognize},
     error::{context, VerboseError},
     multi::{many0, many1, separated_list0, separated_list1},
+    named,
     number::complete::recognize_float,
     sequence::{delimited, pair, terminated, tuple},
-    IResult,
+    tag, IResult,
 };
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -212,6 +213,7 @@ pub enum Type {
     String,
     SignedInteger(IntegerBits),
     Float(FloatBits),
+    Bool,
     UnsignedInteger(IntegerBits),
     Function(Vec<Type>),      // curried type decl, last entry is return type
     Generic { name: String }, // generic/polymorphic type params
@@ -226,6 +228,11 @@ impl Type {
                 "String" => Type::String,
                 "i32" => Type::SignedInteger(IntegerBits::ThirtyTwo),
                 "i64" => Type::SignedInteger(IntegerBits::SixtyFour),
+                "u32" => Type::UnsignedInteger(IntegerBits::ThirtyTwo),
+                "u64" => Type::UnsignedInteger(IntegerBits::SixtyFour),
+                "f32" => Type::Float(FloatBits::ThirtyTwo),
+                "f64" => Type::Float(FloatBits::SixtyFour),
+                "bool" => Type::Bool,
                 other => Type::Generic {
                     name: other.to_string(),
                 }, /* TODO rest of types */
@@ -266,8 +273,8 @@ impl Declaration {
 
 #[derive(PartialEq, Debug, Clone)]
 pub struct TypeAnnotation {
-    name: String,
-    r#type: Type,
+    pub name: String,
+    pub r#type: Type,
 }
 
 #[derive(PartialEq, Debug)]
@@ -335,7 +342,7 @@ impl Program {
 fn parse_program<'a>(i: &'a str) -> IResult<&'a str, Program, VerboseError<&'a str>> {
     let (buf, declarations_vec) = many1(delimited(
         multispace0,
-        alt((parse_type_annotation, parse_declaration_expr)),
+        alt((parse_type_annotation, parse_trait, parse_declaration_expr)),
         multispace0,
     ))(i)?;
     let mut declarations = HashMap::default();
@@ -374,6 +381,13 @@ fn parse_declaration_expr<'a>(i: &'a str) -> IResult<&'a str, Declaration, Verbo
 }
 
 fn parse_type_annotation<'a>(i: &'a str) -> IResult<&'a str, Declaration, VerboseError<&'a str>> {
+    let (buf, res) = parse_type_annotation_inner(i)?;
+    Ok((buf, Declaration::TypeAnnotation(res)))
+}
+
+fn parse_type_annotation_inner<'a>(
+    i: &'a str,
+) -> IResult<&'a str, TypeAnnotation, VerboseError<&'a str>> {
     let (buf, res) = tuple((
         context("type annotation name", parse_name),
         multispace0,
@@ -397,7 +411,35 @@ fn parse_type_annotation<'a>(i: &'a str) -> IResult<&'a str, Declaration, Verbos
         r#type: Type::from_vec_string(args),
     };
 
-    Ok((buf, Declaration::TypeAnnotation(annotation)))
+    Ok((buf, annotation))
+}
+
+fn parse_trait<'a>(i: &'a str) -> IResult<&'a str, Declaration, VerboseError<&'a str>> {
+    // should figure out how to use tag! with strings...
+    let trait_keyword = tuple((char('t'), char('r'), char('a'), char('i'), char('t')));
+    let trait_keyword = delimited(multispace0, trait_keyword, multispace0);
+    let opening_brace = delimited(multispace0, char('{'), multispace0);
+    let closing_brace = delimited(multispace0, char('}'), multispace0);
+    let (buf, res) = tuple((
+        trait_keyword,
+        parse_name,
+        opening_brace,
+        many1(delimited(
+            multispace0,
+            parse_type_annotation_inner,
+            multispace0,
+        )),
+        closing_brace,
+    ))(i)?;
+
+    let (_keyword, name, _opening_brace, annotations, _closing_brace) = res;
+    Ok((
+        buf,
+        Declaration::Trait {
+            name: name.to_string(),
+            methods: annotations,
+        },
+    ))
 }
 
 #[derive(Debug, Error)]

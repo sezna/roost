@@ -1,4 +1,4 @@
-use rost::{compile, Declaration, FloatBits, IntegerBits, Type};
+use rost::{compile, Declaration, FloatBits, IntegerBits, Type, TypeAnnotation};
 
 #[test]
 fn basic_prog_1() {
@@ -179,6 +179,48 @@ fn parse_type_annotation_3() {
             Type::SignedInteger(IntegerBits::ThirtyTwo),
             Type::String,
         ]),
+    );
+}
+
+#[test]
+fn parse_trait() {
+    let prog = r#"
+    trait MyTrait {
+        methodone :: i32 => i32 => f64
+        methodtwo :: String => i32 => bool
+    }
+
+    main = 0"#;
+    let prog = match compile(prog) {
+        Ok(o) => (o),
+        Err(e) => {
+            println!("{}", e);
+            panic!()
+        }
+    };
+    assert_eq!(
+        prog.declarations.get("MyTrait").unwrap(),
+        &Declaration::Trait {
+            name: "MyTrait".into(),
+            methods: vec![
+                TypeAnnotation {
+                    name: "methodone type".into(),
+                    r#type: Type::Function(vec![
+                        Type::SignedInteger(IntegerBits::ThirtyTwo),
+                        Type::SignedInteger(IntegerBits::ThirtyTwo),
+                        Type::Float(FloatBits::SixtyFour)
+                    ])
+                },
+                TypeAnnotation {
+                    name: "methodtwo type".into(),
+                    r#type: Type::Function(vec![
+                        Type::String,
+                        Type::SignedInteger(IntegerBits::ThirtyTwo),
+                        Type::Bool
+                    ])
+                }
+            ]
+        }
     );
 }
 
