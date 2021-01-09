@@ -15,7 +15,7 @@
 
 use nom::{
     branch::alt,
-    character::complete::{alpha1, char, multispace0, none_of, one_of},
+    character::complete::{alpha1, alphanumeric1, char, multispace0, none_of, one_of},
     combinator::{map, not, recognize},
     error::{context, VerboseError},
     multi::{many0, many1, separated_list0, separated_list1},
@@ -60,7 +60,7 @@ pub enum Operator {
 }
 
 fn parse_name<'a>(i: &'a str) -> IResult<&'a str, &'a str, VerboseError<&'a str>> {
-    context("name", alpha1)(i)
+    context("name", alphanumeric1)(i)
 }
 
 fn recognize_base10_int<'a>(input: &'a str) -> IResult<&'a str, &'a str, VerboseError<&'a str>> {
@@ -213,9 +213,33 @@ pub enum Type {
     SignedInteger(IntegerBits),
     Float(FloatBits),
     UnsignedInteger(IntegerBits),
-    Function(Vec<Type>), // curried type decl, last entry is return type
+    Function(Vec<Type>),      // curried type decl, last entry is return type
+    Generic { name: String }, // generic/polymorphic type params
     Unknown,
 }
+
+impl Type {
+    fn from_vec_string(args: Vec<&str>) -> Type {
+        let args = args
+            .into_iter()
+            .map(|x| match x {
+                "String" => Type::String,
+                "i32" => Type::SignedInteger(IntegerBits::ThirtyTwo),
+                "i64" => Type::SignedInteger(IntegerBits::SixtyFour),
+                other => Type::Generic {
+                    name: other.to_string(),
+                }, /* TODO rest of types */
+            })
+            .collect::<Vec<_>>();
+
+        if args.len() == 1 {
+            args[0].clone()
+        } else {
+            Type::Function(args)
+        }
+    }
+}
+
 #[derive(PartialEq, Debug, Clone)]
 pub enum Declaration {
     Expr {
@@ -281,8 +305,11 @@ impl Program {
 }
 
 fn parse_program<'a>(i: &'a str) -> IResult<&'a str, Program, VerboseError<&'a str>> {
-    let (buf, declarations_vec) =
-        many1(delimited(multispace0, parse_declaration_expr, multispace0))(i)?;
+    let (buf, declarations_vec) = many1(delimited(
+        multispace0,
+        alt((parse_type_annotation, parse_declaration_expr)),
+        multispace0,
+    ))(i)?;
     let mut declarations = HashMap::default();
     declarations_vec.into_iter().for_each(|decl| {
         // TODO don't store the names twice
@@ -318,14 +345,31 @@ fn parse_declaration_expr<'a>(i: &'a str) -> IResult<&'a str, Declaration, Verbo
     ))
 }
 
-fn parse_type_annotation<'a>(i: &'a str) -> IResult<&'a str, Program, VerboseError<&'a str>> {
-    tuple((
-        context("skinny arrow", tuple((char('='), char('>')))),
+fn parse_type_annotation<'a>(i: &'a str) -> IResult<&'a str, Declaration, VerboseError<&'a str>> {
+    let (buf, res) = tuple((
+        context("type annotation name", parse_name),
+        multispace0,
+        context("double colon", tuple((char(':'), char(':')))),
+        multispace0,
         context(
             "type args",
-            separated_list1(pair(char(','), multispace0), parse_expr),
+            separated_list1(
+                context(
+                    "skinny arrow",
+                    tuple((multispace0, char('='), char('>'), multispace0)),
+                ),
+                parse_name,
+            ),
         ),
-    ))
+    ))(i)?;
+
+    let (name, _space1, _colon, _space2, args) = res;
+    let annotation = TypeAnnotation {
+        name: name.to_string(),
+        r#type: Type::from_vec_string(args),
+    };
+
+    Ok((buf, Declaration::TypeAnnotation(annotation)))
 }
 
 #[derive(Debug, Error)]

@@ -111,9 +111,10 @@ fn func_app_return_type_3() {
 
 #[test]
 fn parse_type_annotation() {
+    // should be able to handle upgrading types to higher precisions
     let prog = r#"
-    main :: i32
-    main = 10 + 2 
+    main :: i64
+    main = + 10 2 
     "#;
 
     let prog = match compile(prog) {
@@ -126,16 +127,16 @@ fn parse_type_annotation() {
 
     check_type(
         prog.declarations.get("main"),
-        Type::Function(vec![Type::SignedInteger(IntegerBits::ThirtyTwo)]),
+        Type::Function(vec![Type::SignedInteger(IntegerBits::SixtyFour)]),
     );
 }
 
 #[test]
-fn parse_type_annotation() {
+fn parse_type_annotation_2() {
     let prog = r#"
     otherfunc :: i32 => i32
-    otherfunc x = x + 2
-    main = otherfunc 10
+    otherfunc x = + x 2
+    main = otherfunc(10)
     "#;
 
     let prog = match compile(prog) {
