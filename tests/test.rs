@@ -183,6 +183,30 @@ fn parse_type_annotation_3() {
 }
 
 #[test]
+fn chained_type_inference_from_annotation() {
+    let prog = r#"
+    foo :: String => String => String
+    foo x y = + x y
+    bar x y = foo(x,y)
+    baz x y = bar(x,y)
+    main z y = baz(z,y)
+    "#;
+
+    let prog = match compile(prog) {
+        Ok(o) => (o),
+        Err(e) => {
+            println!("{}", e);
+            panic!()
+        }
+    };
+
+    check_type(
+        prog.declarations.get("main"),
+        Type::Function(vec![Type::String, Type::String, Type::String]),
+    );
+}
+
+#[test]
 fn parse_trait() {
     let prog = r#"
     trait MyTrait {

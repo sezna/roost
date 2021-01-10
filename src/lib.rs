@@ -309,7 +309,7 @@ impl Program {
             }
         }
     }
-    fn apply_type_annotations(&mut self) {
+    fn apply_type_annotations(&mut self) -> Result<(), CompileError> {
         let annotations = self
             .declarations
             .clone()
@@ -322,8 +322,11 @@ impl Program {
                 }
             });
         for (_name, annotation) in annotations {
-            let to_update = self.declarations.get_mut(annotation.name.split(' ').collect::<Vec<_>>()[0]).expect("Annotated something that isn't declared -- TODO make this return result instead of panicking");
-            dbg!(&to_update);
+            let name = annotation.name.split(' ').collect::<Vec<_>>()[0];
+            let to_update = match self.declarations.get_mut(name) {
+                Some(o) => o,
+                None => return Err(CompileError::AnnotatedNonexistentDeclaration(name.into())),
+            };
             match to_update {
                 Declaration::Expr { value, .. } => {
                     // TODO: check if it already has a type, and then see if this type can override
@@ -331,11 +334,10 @@ impl Program {
                     // i.e. i64 can override 132, f64 can override f32
                     value.return_type = annotation.r#type;
                 }
-                _ => panic!(
-                    "TODO return result: tried to annotate something that cannot be annotated"
-                ),
-            }
+                _ => return Err(CompileError::AnnotatedNonAnnotatable(name.into())),
+            };
         }
+        Ok(())
     }
 }
 
@@ -452,6 +454,10 @@ pub enum CompileError {
     MissingMainFunction,
     #[error("Program contained extraneous input: {0}")]
     ExtraneousInput(String),
+    #[error("You wrote a type annotation for something that doesn't exist or isn't in scope. Declaration \"{0}\" not found.")]
+    AnnotatedNonexistentDeclaration(String),
+    #[error("Attempted to give a type annotation to something that cannot be annotated. \"{0}\" is not an annotatable expression.")]
+    AnnotatedNonAnnotatable(String),
 }
 
 impl std::convert::From<nom::Err<VerboseError<&str>>> for CompileError {
@@ -518,5 +524,3 @@ pub fn compile(input: &str) -> Result<Program, CompileError> {
 
     Ok(prog)
 }
-
-//fn main() {}
