@@ -248,6 +248,34 @@ fn parse_trait() {
     );
 }
 
+#[test]
+fn tuple_type_annotation() {
+    let prog = r#"
+    main :: (a, b) => (a, b)
+    main x = x
+    "#;
+    let prog = match compile(prog) {
+        Ok(o) => (o),
+        Err(e) => {
+            println!("{}", e);
+            panic!()
+        }
+    };
+    check_type(
+        prog.declarations.get("main"),
+        Type::Function(vec![
+            Type::Tuple(vec![
+                Type::Generic { name: "a".into() },
+                Type::Generic { name: "b".into() },
+            ]),
+            Type::Tuple(vec![
+                Type::Generic { name: "a".into() },
+                Type::Generic { name: "b".into() },
+            ]),
+        ]),
+    )
+}
+
 fn check_type(a: Option<&Declaration>, b: Type) {
     assert_eq!(
         if let Some(Declaration::Expr { value, .. }) = a {

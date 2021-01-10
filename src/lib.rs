@@ -59,6 +59,22 @@ pub enum Operator {
     Divide,
 }
 
+fn parse_type<'a>(i: &'a str) -> IResult<&'a str, Vec<&'a str>, VerboseError<&'a str>> {
+    let tuple_type = delimited(
+        delimited(multispace0, char('('), multispace0),
+        separated_list1(delimited(multispace0, char(','), multispace0), parse_name),
+        delimited(multispace0, char(')'), multispace0),
+    );
+    context("type name", alt((parse_name_to_singleton_vec, tuple_type)))(i)
+}
+
+fn parse_name_to_singleton_vec<'a>(
+    i: &'a str,
+) -> IResult<&'a str, Vec<&'a str>, VerboseError<&'a str>> {
+    let (buf, res) = context("name", alphanumeric1)(i)?;
+    Ok((buf, vec![res]))
+}
+
 fn parse_name<'a>(i: &'a str) -> IResult<&'a str, &'a str, VerboseError<&'a str>> {
     context("name", alphanumeric1)(i)
 }
@@ -223,37 +239,53 @@ pub enum Type {
     UnsignedInteger(IntegerBits),
     Function(Vec<Type>),      // curried type decl, last entry is return type
     Generic { name: String }, // generic/polymorphic type params
+    Tuple(Vec<Type>),
     Unknown,
 }
 
 impl Type {
-    fn from_vec_string(args: Vec<&str>) -> Type {
+    fn from_string(a: &str) -> Type {
+        match a {
+            "String" => Type::String,
+            "i8" => Type::SignedInteger(IntegerBits::Eight),
+            "i16" => Type::SignedInteger(IntegerBits::Sixteen),
+            "i32" => Type::SignedInteger(IntegerBits::ThirtyTwo),
+            "i64" => Type::SignedInteger(IntegerBits::SixtyFour),
+            "i128" => Type::SignedInteger(IntegerBits::OneTwentyEight),
+            "u8" => Type::UnsignedInteger(IntegerBits::Eight),
+            "u16" => Type::UnsignedInteger(IntegerBits::Sixteen),
+            "u32" => Type::UnsignedInteger(IntegerBits::ThirtyTwo),
+            "u64" => Type::UnsignedInteger(IntegerBits::SixtyFour),
+            "u128" => Type::UnsignedInteger(IntegerBits::OneTwentyEight),
+            "f32" => Type::Float(FloatBits::ThirtyTwo),
+            "f64" => Type::Float(FloatBits::SixtyFour),
+            "usize" => Type::UnsignedInteger(IntegerBits::Arch),
+            "isize" => Type::SignedInteger(IntegerBits::Arch),
+            "bool" => Type::Bool,
+            other => Type::Generic {
+                name: other.to_string(),
+            }, /* TODO rest of types */
+        }
+    }
+    fn from_vec_string(args: Vec<Vec<&str>>) -> Type {
         let args = args
             .into_iter()
-            .map(|x| match x {
-                "String" => Type::String,
-                "i8" => Type::SignedInteger(IntegerBits::Eight),
-                "i16" => Type::SignedInteger(IntegerBits::Sixteen),
-                "i32" => Type::SignedInteger(IntegerBits::ThirtyTwo),
-                "i64" => Type::SignedInteger(IntegerBits::SixtyFour),
-                "i128" => Type::SignedInteger(IntegerBits::OneTwentyEight),
-                "u8" => Type::UnsignedInteger(IntegerBits::Eight),
-                "u16" => Type::UnsignedInteger(IntegerBits::Sixteen),
-                "u32" => Type::UnsignedInteger(IntegerBits::ThirtyTwo),
-                "u64" => Type::UnsignedInteger(IntegerBits::SixtyFour),
-                "u128" => Type::UnsignedInteger(IntegerBits::OneTwentyEight),
-                "f32" => Type::Float(FloatBits::ThirtyTwo),
-                "f64" => Type::Float(FloatBits::SixtyFour),
-                "usize" => Type::UnsignedInteger(IntegerBits::Arch),
-                "isize" => Type::SignedInteger(IntegerBits::Arch),
-                "bool" => Type::Bool,
-                other => Type::Generic {
-                    name: other.to_string(),
-                }, /* TODO rest of types */
+            .map(|y| {
+                if y.len() == 1 {
+                    Type::from_string(y[0])
+                } else {
+                    // TODO handle parsing nested tuple types
+                    Type::Tuple(
+                        y.into_iter()
+                            .map(|x| Type::from_string(x))
+                            .collect::<Vec<_>>(),
+                    )
+                }
             })
             .collect::<Vec<_>>();
 
         if args.len() == 1 {
+            // then this is not a fn type
             args[0].clone()
         } else {
             Type::Function(args)
@@ -425,7 +457,7 @@ fn parse_type_annotation_inner<'a>(
                     "skinny arrow",
                     tuple((multispace0, char('='), char('>'), multispace0)),
                 ),
-                parse_name,
+                parse_type,
             ),
         ),
     ))(i)?;
