@@ -171,9 +171,9 @@ impl TypedExpr {
         match self.expr {
             Expr::FuncApp {
                 ref func_name,
-                ref args,
+                args: _,
             } => {
-                let mut cl = declarations.clone();
+                let _cl = declarations.clone();
                 if let Some(Declaration::Expr { value, .. }) = declarations.get(func_name) {
                     (
                         TypedExpr {
