@@ -276,6 +276,21 @@ fn tuple_type_annotation() {
     )
 }
 
+#[test]
+fn tuple_expr() {
+    let prog = r#"
+    main :: i32 => (i32, i32)
+    main x = (x, x)
+    "#;
+    match compile(prog) {
+        Ok(o) => (o),
+        Err(e) => {
+            println!("{}", e);
+            panic!()
+        }
+    };
+}
+
 fn check_type(a: Option<&Declaration>, b: Type) {
     assert_eq!(
         if let Some(Declaration::Expr { value, .. }) = a {
