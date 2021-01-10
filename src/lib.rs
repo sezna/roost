@@ -15,14 +15,13 @@
 
 use nom::{
     branch::alt,
-    character::complete::{alpha1, alphanumeric1, char, multispace0, none_of, one_of},
+    character::complete::{alphanumeric1, char, multispace0, none_of, one_of},
     combinator::{map, not, recognize},
     error::{context, VerboseError},
     multi::{many0, many1, separated_list0, separated_list1},
-    named,
     number::complete::recognize_float,
     sequence::{delimited, pair, terminated, tuple},
-    tag, IResult,
+    IResult,
 };
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -165,7 +164,10 @@ pub struct TypedExpr {
 }
 
 impl TypedExpr {
-    fn resolve_unknowns(&self, declarations: &HashMap<String, Declaration>) -> (TypedExpr, bool) {
+    fn resolve_unknowns(
+        &self,
+        declarations: &HashMap<String, Declaration>,
+    ) -> Result<(TypedExpr, bool), CompileError> {
         // if there is a function application with a known return type, then we can propagate that
         // out
         match self.expr {
@@ -174,20 +176,24 @@ impl TypedExpr {
                 args: _,
             } => {
                 let _cl = declarations.clone();
-                if let Some(Declaration::Expr { value, .. }) = declarations.get(func_name) {
-                    (
+                match declarations.get(func_name) {
+                    Some(Declaration::Expr { value, .. }) => Ok((
                         TypedExpr {
                             return_type: value.return_type.clone(),
                             expr: self.expr.clone(),
                         },
                         self.return_type != value.return_type,
-                    )
-                } else {
-                    panic!("Used an undefined function! return a result here instead of panicking");
+                    )),
+                    None => return Err(CompileError::UnrecognizedFunction(func_name.into())),
+                    Some(o) => {
+                        return Err(CompileError::CalledNonFunction(
+                            func_name.into(),
+                            o.type_name(),
+                        ))
+                    }
                 }
-                //                    func_decl.value.resolve_unknowns(&mut cl);
             }
-            _ => ((self.clone(), false)),
+            _ => Ok((self.clone(), false)),
         }
     }
 }
@@ -226,12 +232,20 @@ impl Type {
             .into_iter()
             .map(|x| match x {
                 "String" => Type::String,
+                "i8" => Type::SignedInteger(IntegerBits::Eight),
+                "i16" => Type::SignedInteger(IntegerBits::Sixteen),
                 "i32" => Type::SignedInteger(IntegerBits::ThirtyTwo),
                 "i64" => Type::SignedInteger(IntegerBits::SixtyFour),
+                "i128" => Type::SignedInteger(IntegerBits::OneTwentyEight),
+                "u8" => Type::UnsignedInteger(IntegerBits::Eight),
+                "u16" => Type::UnsignedInteger(IntegerBits::Sixteen),
                 "u32" => Type::UnsignedInteger(IntegerBits::ThirtyTwo),
                 "u64" => Type::UnsignedInteger(IntegerBits::SixtyFour),
+                "u128" => Type::UnsignedInteger(IntegerBits::OneTwentyEight),
                 "f32" => Type::Float(FloatBits::ThirtyTwo),
                 "f64" => Type::Float(FloatBits::SixtyFour),
+                "usize" => Type::UnsignedInteger(IntegerBits::Arch),
+                "isize" => Type::SignedInteger(IntegerBits::Arch),
                 "bool" => Type::Bool,
                 other => Type::Generic {
                     name: other.to_string(),
@@ -269,6 +283,14 @@ impl Declaration {
             Declaration::TypeAnnotation(TypeAnnotation { name, .. }) => name.to_string(),
         }
     }
+    fn type_name(&self) -> String {
+        match self {
+            Declaration::Expr { .. } => "expression",
+            Declaration::Trait { .. } => "trait",
+            Declaration::TypeAnnotation(..) => "type annotation",
+        }
+        .into()
+    }
 }
 
 #[derive(PartialEq, Debug, Clone)]
@@ -286,7 +308,7 @@ impl Program {
     fn contains_main_function(&self) -> bool {
         self.declarations.get("main").is_some()
     }
-    fn resolve_unknowns(&mut self) {
+    fn resolve_unknowns(&mut self) -> Result<(), CompileError> {
         let mut were_changes = true;
         while were_changes {
             were_changes = false;
@@ -296,18 +318,19 @@ impl Program {
                 .into_iter()
                 .map(|(_, decl)| {
                     if let Declaration::Expr { name, args, value } = decl {
-                        let (value, were_changes) = value.resolve_unknowns(&self.declarations);
-                        (Declaration::Expr { args, name, value }, were_changes)
+                        let (value, were_changes) = value.resolve_unknowns(&self.declarations)?;
+                        Ok((Declaration::Expr { args, name, value }, were_changes))
                     } else {
-                        (decl, false)
+                        Ok((decl, false))
                     }
                 })
-                .collect::<Vec<_>>();
+                .collect::<Result<Vec<_>, CompileError>>()?;
             for (decl, were_changes_2) in new_decls {
                 were_changes = were_changes || were_changes_2;
                 self.declarations.insert(decl.name(), decl);
             }
         }
+        Ok(())
     }
     fn apply_type_annotations(&mut self) -> Result<(), CompileError> {
         let annotations = self
@@ -458,6 +481,8 @@ pub enum CompileError {
     AnnotatedNonexistentDeclaration(String),
     #[error("Attempted to give a type annotation to something that cannot be annotated. \"{0}\" is not an annotatable expression.")]
     AnnotatedNonAnnotatable(String),
+    #[error("Attempted to call something that isn't a function. \"{0}\" is not a function, it is a {1}.")]
+    CalledNonFunction(String, String),
 }
 
 impl std::convert::From<nom::Err<VerboseError<&str>>> for CompileError {
@@ -518,9 +543,9 @@ pub fn compile(input: &str) -> Result<Program, CompileError> {
     if !prog.contains_main_function() {
         return Err(CompileError::MissingMainFunction);
     }
-    prog.apply_type_annotations();
+    prog.apply_type_annotations()?;
     // TODO: validate all function applications and resolve their `Unknown` return types
-    prog.resolve_unknowns();
+    prog.resolve_unknowns()?;
 
     Ok(prog)
 }
