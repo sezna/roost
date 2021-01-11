@@ -171,11 +171,12 @@ pub enum Expr {
     },
     // just a name that gets looked up in the namespace, with precedence to locally scoped vars
     VarExp(String),
+    TupleExp(Vec<TypedExpr>),
 }
 
 #[derive(PartialEq, Debug, Clone)]
 pub struct TypedExpr {
-    expr: Expr,
+    pub expr: Expr,
     pub return_type: Type,
 }
 
@@ -533,12 +534,38 @@ fn parse_var_expr<'a>(i: &'a str) -> IResult<&'a str, TypedExpr, VerboseError<&'
         },
     ))
 }
+fn parse_tuple<'a>(i: &'a str) -> IResult<&'a str, TypedExpr, VerboseError<&'a str>> {
+    let tuple = delimited(
+        delimited(multispace0, char('('), multispace0),
+        separated_list1(delimited(multispace0, char(','), multispace0), parse_expr),
+        delimited(multispace0, char(')'), multispace0),
+    );
+    let (buf, res) = context("tuple", tuple)(i)?;
+
+    Ok((
+        buf,
+        TypedExpr {
+            return_type: Type::Tuple(
+                res.iter()
+                    .map(|TypedExpr { return_type, .. }| return_type.clone())
+                    .collect(),
+            ),
+            expr: Expr::TupleExp(res.into_iter().collect()),
+        },
+    ))
+}
 
 fn parse_expr<'a>(i: &'a str) -> IResult<&'a str, TypedExpr, VerboseError<&'a str>> {
     context(
         "expression",
         terminated(
-            alt((parse_func_app, parse_op_exp, parse_constant, parse_var_expr)),
+            alt((
+                parse_func_app,
+                parse_op_exp,
+                parse_constant,
+                parse_var_expr,
+                parse_tuple,
+            )),
             multispace0,
         ),
     )(i)
@@ -558,6 +585,7 @@ fn parse_func_app<'a>(i: &'a str) -> IResult<&'a str, TypedExpr, VerboseError<&'
 
     let func_name = func_name.to_string();
     // TODO function return types based on lookup table from function declarations
+    // ^ I think this is already done?
     Ok((
         rest,
         TypedExpr {
@@ -576,7 +604,6 @@ pub fn compile(input: &str) -> Result<Program, CompileError> {
         return Err(CompileError::MissingMainFunction);
     }
     prog.apply_type_annotations()?;
-    // TODO: validate all function applications and resolve their `Unknown` return types
     prog.resolve_unknowns()?;
 
     Ok(prog)

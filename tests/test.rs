@@ -1,4 +1,4 @@
-use rost::{compile, Declaration, FloatBits, IntegerBits, Type, TypeAnnotation};
+use rost::{compile, Declaration, Expr, FloatBits, IntegerBits, Type, TypeAnnotation, TypedExpr};
 
 #[test]
 fn basic_prog_1() {
@@ -282,13 +282,28 @@ fn tuple_expr() {
     main :: i32 => (i32, i32)
     main x = (x, x)
     "#;
-    match compile(prog) {
+    let prog = match compile(prog) {
         Ok(o) => (o),
         Err(e) => {
             println!("{}", e);
             panic!()
         }
     };
+
+    assert_eq!(
+        if let Declaration::Expr { value, .. } = prog.declarations.get("main").unwrap() {
+            value
+        } else {
+            panic!("not an expr")
+        },
+        &TypedExpr {
+            expr: Expr::VarExp("x".into()),
+            return_type: Type::Tuple(vec![
+                Type::SignedInteger(IntegerBits::ThirtyTwo),
+                Type::SignedInteger(IntegerBits::ThirtyTwo)
+            ])
+        }
+    );
 }
 
 fn check_type(a: Option<&Declaration>, b: Type) {
