@@ -188,28 +188,22 @@ impl TypedExpr {
         // if there is a function application with a known return type, then we can propagate that
         // out
         match self.expr {
-            Expr::FuncApp {
-                ref func_name,
-                args: _,
-            } => {
-                let _cl = declarations.clone();
-                match declarations.get(func_name) {
-                    Some(Declaration::Expr { value, .. }) => Ok((
-                        TypedExpr {
-                            return_type: value.return_type.clone(),
-                            expr: self.expr.clone(),
-                        },
-                        self.return_type != value.return_type,
-                    )),
-                    None => return Err(CompileError::UnrecognizedFunction(func_name.into())),
-                    Some(o) => {
-                        return Err(CompileError::CalledNonFunction(
-                            func_name.into(),
-                            o.type_name(),
-                        ))
-                    }
+            Expr::FuncApp { ref func_name, .. } => match declarations.get(func_name) {
+                Some(Declaration::Expr { value, .. }) => Ok((
+                    TypedExpr {
+                        return_type: value.return_type.clone(),
+                        expr: self.expr.clone(),
+                    },
+                    self.return_type != value.return_type,
+                )),
+                None => return Err(CompileError::UnrecognizedFunction(func_name.into())),
+                Some(o) => {
+                    return Err(CompileError::CalledNonFunction(
+                        func_name.into(),
+                        o.type_name(),
+                    ))
                 }
-            }
+            },
             _ => Ok((self.clone(), false)),
         }
     }

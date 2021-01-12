@@ -278,6 +278,8 @@ fn tuple_type_annotation() {
 
 #[test]
 fn tuple_expr() {
+    // should be able to infer the types of the `x` variables in the tuple from the function's
+    // type annotation
     let prog = r#"
     main :: i32 => (i32, i32)
     main x = (x, x)
@@ -291,16 +293,30 @@ fn tuple_expr() {
     };
 
     assert_eq!(
-        if let Declaration::Expr { value, .. } = prog.declarations.get("main").unwrap() {
-            value
-        } else {
-            panic!("not an expr")
-        },
+        dbg!(
+            if let Declaration::Expr { value, .. } = prog.declarations.get("main").unwrap() {
+                value
+            } else {
+                panic!("not an expr")
+            }
+        ),
         &TypedExpr {
-            expr: Expr::VarExp("x".into()),
-            return_type: Type::Tuple(vec![
+            expr: Expr::TupleExp(vec![
+                TypedExpr {
+                    expr: Expr::VarExp("x".into(),),
+                    return_type: Type::SignedInteger(IntegerBits::ThirtyTwo),
+                },
+                TypedExpr {
+                    expr: Expr::VarExp("x".into(),),
+                    return_type: Type::SignedInteger(IntegerBits::ThirtyTwo),
+                }
+            ]),
+            return_type: Type::Function(vec![
                 Type::SignedInteger(IntegerBits::ThirtyTwo),
-                Type::SignedInteger(IntegerBits::ThirtyTwo)
+                Type::Tuple(vec![
+                    Type::SignedInteger(IntegerBits::ThirtyTwo),
+                    Type::SignedInteger(IntegerBits::ThirtyTwo)
+                ])
             ])
         }
     );
