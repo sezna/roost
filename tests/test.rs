@@ -70,7 +70,7 @@ fn func_app_return_type() {
 
 /*
 #[test]
-fn func_app_return_type_2() {
+fn func_app_r#type_2() {
     let prog = r#"
     divfunc x y = / x y
     main = divfunc(10, 2)
@@ -83,7 +83,7 @@ fn func_app_return_type_2() {
         }
     };
     assert_eq!(
-        prog.declarations.get("main").unwrap().value.return_type,
+        prog.declarations.get("main").unwrap().value.r#type,
         Type::Float(FloatBits::SixtyFour)
     );
 }
@@ -304,14 +304,14 @@ fn tuple_expr() {
             expr: Expr::TupleExp(vec![
                 TypedExpr {
                     expr: Expr::VarExp("x".into(),),
-                    return_type: Type::SignedInteger(IntegerBits::ThirtyTwo),
+                    r#type: Type::SignedInteger(IntegerBits::ThirtyTwo),
                 },
                 TypedExpr {
                     expr: Expr::VarExp("x".into(),),
-                    return_type: Type::SignedInteger(IntegerBits::ThirtyTwo),
+                    r#type: Type::SignedInteger(IntegerBits::ThirtyTwo),
                 }
             ]),
-            return_type: Type::Function(vec![
+            r#type: Type::Function(vec![
                 Type::SignedInteger(IntegerBits::ThirtyTwo),
                 Type::Tuple(vec![
                     Type::SignedInteger(IntegerBits::ThirtyTwo),
@@ -325,7 +325,7 @@ fn tuple_expr() {
 fn check_type(a: Option<&Declaration>, b: Type) {
     assert_eq!(
         if let Some(Declaration::Expr { value, .. }) = a {
-            Some(value.return_type.clone())
+            Some(value.r#type.clone())
         } else {
             None
         },

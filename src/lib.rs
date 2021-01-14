@@ -94,7 +94,7 @@ fn parse_int<'a>(i: &'a str) -> IResult<&'a str, TypedExpr, VerboseError<&'a str
         buff,
         TypedExpr {
             expr: Expr::Constant(Literal::Integer(res)),
-            return_type: Type::SignedInteger(IntegerBits::ThirtyTwo),
+            r#type: Type::SignedInteger(IntegerBits::ThirtyTwo),
         },
     ))
 }
@@ -107,7 +107,7 @@ fn parse_float<'a>(i: &'a str) -> IResult<&'a str, TypedExpr, VerboseError<&'a s
         buff,
         TypedExpr {
             expr: Expr::Constant(Literal::Float(res)),
-            return_type: Type::Float(FloatBits::SixtyFour),
+            r#type: Type::Float(FloatBits::SixtyFour),
         },
     ))
 }
@@ -119,7 +119,7 @@ fn parse_string<'a>(i: &'a str) -> IResult<&'a str, TypedExpr, VerboseError<&'a 
         buf,
         TypedExpr {
             expr: Expr::Constant(Literal::String(res.iter().collect())),
-            return_type: Type::String,
+            r#type: Type::String,
         },
     ))
 }
@@ -131,7 +131,7 @@ fn op_type_lookup(lhs: &TypedExpr, rhs: &TypedExpr, op: Operator) -> Type {
     use Operator::*;
     use Type::*;
     // TODO not nearly even kind of exhaustive
-    match (op, lhs.return_type.clone(), rhs.return_type.clone()) {
+    match (op, lhs.r#type.clone(), rhs.r#type.clone()) {
         (Divide, SignedInteger(_), SignedInteger(_))
         | (Divide, Float(_), SignedInteger(_))
         | (Divide, SignedInteger(_), Float(_))
@@ -154,7 +154,7 @@ fn parse_op_exp<'a>(i: &'a str) -> IResult<&'a str, TypedExpr, VerboseError<&'a 
                 rhs: Box::new(rhs),
                 op,
             },
-            return_type: calculated_return_type,
+            r#type: calculated_return_type,
         },
     ))
 }
@@ -178,7 +178,7 @@ pub enum Expr {
 #[derive(PartialEq, Debug, Clone)]
 pub struct TypedExpr {
     pub expr: Expr,
-    pub return_type: Type,
+    pub r#type: Type,
 }
 
 impl TypedExpr {
@@ -192,10 +192,10 @@ impl TypedExpr {
             Expr::FuncApp { ref func_name, .. } => match declarations.get(func_name) {
                 Some(Declaration::Expr { value, .. }) => Ok((
                     TypedExpr {
-                        return_type: value.return_type.clone(),
+                        r#type: value.r#type.clone(),
                         expr: self.expr.clone(),
                     },
-                    self.return_type != value.return_type,
+                    self.r#type != value.r#type,
                 )),
                 None => return Err(CompileError::UnrecognizedFunction(func_name.into())),
                 Some(o) => {
@@ -205,6 +205,51 @@ impl TypedExpr {
                     ))
                 }
             },
+            Expr::TupleExp(ref tupl) => {
+                // check type of surrounding expression and apply it to the tuple, if the arity
+                // matches
+                let (return_expr_arity, return_type) =
+                    if let Type::Function(ref inner) = self.r#type {
+                        let last_type = inner.iter().last().unwrap();
+                        if let Either::Right(num) = last_type.arity() {
+                            (num, last_type)
+                        } else {
+                            panic!("This shouldn't be a fn i think");
+                        }
+                    } else {
+                        dbg!(&self.r#type);
+                        todo!("Compile error: tuple exp has non-tuple return type");
+                    };
+                let return_type = match return_type {
+                    Type::Tuple(tupl) => tupl,
+                    _ => todo!("internal compiler error fn didn't return tuple"),
+                };
+                if return_expr_arity != tupl.len() {
+                    // TODO this could result from an inferencing error and not an annotation
+                    // error. A better compile error could be used here.
+                    return Err(CompileError::ArityMismatch {
+                        expr_arity: format_arity(Either::Right(tupl.len())),
+                        annotation_arity: format_arity(self.r#type.arity()),
+                    });
+                } else {
+                    Ok((
+                        TypedExpr {
+                            r#type: self.r#type.clone(),
+                            expr: Expr::TupleExp(
+                                tupl.iter()
+                                    .zip(return_type)
+                                    .map(|(expr, ty)| {
+                                        let mut expr = expr.clone();
+                                        expr.r#type = ty.clone();
+                                        expr
+                                    })
+                                    .collect(),
+                            ),
+                        },
+                        tupl.iter().find(|x| x.r#type == Type::Unknown).is_some(),
+                    ))
+                }
+            }
             _ => Ok((self.clone(), false)),
         }
     }
@@ -244,18 +289,18 @@ impl Type {
         match self {
             Type::Tuple(ref tup) => Either::Right(tup.len()),
             Type::Function(ref types) => {
-                let return_type_arity = types
+                let r#type_arity = types
                     .iter()
                     .last()
                     .expect("fn item had no return type")
                     .arity();
-                let return_type_arity = match return_type_arity {
+                let r#type_arity = match r#type_arity {
                     Either::Left(..) => panic!("return type had function erity; internal error"),
                     Either::Right(num) => num,
                 };
 
                 let num_types = types.len();
-                Either::Left((return_type_arity, num_types))
+                Either::Left((r#type_arity, num_types))
             }
             _ => Either::Right(1),
         }
@@ -421,7 +466,7 @@ impl Program {
                         });
                     }
 
-                    value.return_type = annotation.r#type;
+                    value.r#type = annotation.r#type;
                 }
                 _ => return Err(CompileError::AnnotatedNonAnnotatable(name.into())),
             };
@@ -435,7 +480,7 @@ type TupleArity = usize;
 
 fn format_arity(arity: Either<FunctionArity, TupleArity>) -> String {
     match arity {
-        Either::Left((return_type, args)) => format!("f{}.{}", return_type, args),
+        Either::Left((r#type, args)) => format!("f{}.{}", r#type, args),
         Either::Right(n) => format!("{}", n),
     }
 }
@@ -603,7 +648,7 @@ fn parse_var_expr<'a>(i: &'a str) -> IResult<&'a str, TypedExpr, VerboseError<&'
         buf,
         TypedExpr {
             expr: Expr::VarExp(res.into()),
-            return_type: Type::Unknown,
+            r#type: Type::Unknown,
         },
     ))
 }
@@ -618,9 +663,9 @@ fn parse_tuple<'a>(i: &'a str) -> IResult<&'a str, TypedExpr, VerboseError<&'a s
     Ok((
         buf,
         TypedExpr {
-            return_type: Type::Tuple(
+            r#type: Type::Tuple(
                 res.iter()
-                    .map(|TypedExpr { return_type, .. }| return_type.clone())
+                    .map(|TypedExpr { r#type, .. }| r#type.clone())
                     .collect(),
             ),
             expr: Expr::TupleExp(res.into_iter().collect()),
@@ -663,7 +708,7 @@ fn parse_func_app<'a>(i: &'a str) -> IResult<&'a str, TypedExpr, VerboseError<&'
         rest,
         TypedExpr {
             expr: Expr::FuncApp { func_name, args },
-            return_type: Type::Unknown,
+            r#type: Type::Unknown,
         },
     ))
 }
