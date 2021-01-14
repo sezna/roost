@@ -13,6 +13,7 @@
 //
 // static typing but inferred polymorphism
 
+use either::Either;
 use nom::{
     branch::alt,
     character::complete::{alphanumeric1, char, multispace0, none_of, one_of},
@@ -239,6 +240,27 @@ pub enum Type {
 }
 
 impl Type {
+    fn arity(&self) -> Either<FunctionArity, TupleArity> {
+        match self {
+            Type::Tuple(ref tup) => Either::Right(tup.len()),
+            Type::Function(ref types) => {
+                let return_type_arity = types
+                    .iter()
+                    .last()
+                    .expect("fn item had no return type")
+                    .arity();
+                let return_type_arity = match return_type_arity {
+                    Either::Left(..) => panic!("return type had function erity; internal error"),
+                    Either::Right(num) => num,
+                };
+
+                let num_types = types.len();
+                Either::Left((return_type_arity, num_types))
+            }
+            _ => Either::Right(1),
+        }
+    }
+
     fn from_string(a: &str) -> Type {
         match a {
             "String" => Type::String,
@@ -378,16 +400,68 @@ impl Program {
                 None => return Err(CompileError::AnnotatedNonexistentDeclaration(name.into())),
             };
             match to_update {
-                Declaration::Expr { value, .. } => {
+                // an expr declaration is a function or value declaration
+                Declaration::Expr { value, args, .. } => {
                     // TODO: check if it already has a type, and then see if this type can override
                     // it
                     // i.e. i64 can override 132, f64 can override f32
+                    // check the arity (size of tuple) of the expr in this func
+                    let expr_arity = if args.len() == 0 {
+                        Either::Right(value.expr.arity())
+                    } else {
+                        // if there are args, this is a function
+                        // +1 for the return type
+                        Either::Left((value.expr.arity(), args.len() + 1))
+                    };
+                    let annotation_arity = annotation.arity();
+                    if expr_arity != annotation_arity {
+                        return Err(CompileError::ArityMismatch {
+                            expr_arity: format_arity(expr_arity),
+                            annotation_arity: format_arity(annotation_arity),
+                        });
+                    }
+
                     value.return_type = annotation.r#type;
                 }
                 _ => return Err(CompileError::AnnotatedNonAnnotatable(name.into())),
             };
         }
         Ok(())
+    }
+}
+
+type FunctionArity = (usize, usize);
+type TupleArity = usize;
+
+fn format_arity(arity: Either<FunctionArity, TupleArity>) -> String {
+    match arity {
+        Either::Left((return_type, args)) => format!("f{}.{}", return_type, args),
+        Either::Right(n) => format!("{}", n),
+    }
+}
+
+impl TypeAnnotation {
+    fn arity(&self) -> Either<FunctionArity, TupleArity> {
+        self.r#type.arity()
+    }
+}
+
+impl Expr {
+    fn arity(&self) -> TupleArity {
+        match self {
+            Expr::TupleExp(ref tup) => tup.len(),
+            Expr::FuncApp {
+                ref func_name,
+                args,
+                ..
+            } => {
+                // args + return type is the arity
+                todo!("Maybe move this to typed expr? need return type for arity")
+            }
+            Expr::Constant(..) => 1,
+            Expr::VarExp { .. } => todo!("check arity of variable, or assign it here"),
+            Expr::OpExp { .. } => 1, // I think this is correct
+        }
     }
 }
 
@@ -510,6 +584,11 @@ pub enum CompileError {
     AnnotatedNonAnnotatable(String),
     #[error("Attempted to call something that isn't a function. \"{0}\" is not a function, it is a {1}.")]
     CalledNonFunction(String, String),
+    #[error("Attempted to annotate expression of arity {expr_arity} with annotation of arity {annotation_arity}")]
+    ArityMismatch {
+        expr_arity: String,
+        annotation_arity: String,
+    },
 }
 
 impl std::convert::From<nom::Err<VerboseError<&str>>> for CompileError {
