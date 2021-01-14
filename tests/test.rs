@@ -324,11 +324,11 @@ fn tuple_expr() {
 
 fn check_type(a: Option<&Declaration>, b: Type) {
     assert_eq!(
-        if let Some(Declaration::Expr { value, .. }) = a {
+        dbg!(if let Some(Declaration::Expr { value, .. }) = a {
             Some(value.r#type.clone())
         } else {
             None
-        },
+        }),
         Some(b)
     );
 }

@@ -182,6 +182,32 @@ pub struct TypedExpr {
 }
 
 impl TypedExpr {
+    fn arity(&self) -> Either<FunctionArity, TupleArity> {
+        match &self.expr {
+            Expr::TupleExp(ref tup) => {
+                assert_eq!(
+                    if let Type::Tuple(ref stuff) = self.r#type {
+                        stuff.len()
+                    } else {
+                        0
+                    },
+                    tup.len()
+                );
+                Either::Right(tup.len())
+            }
+            Expr::FuncApp {
+                ref func_name,
+                args,
+                ..
+            } => {
+                // args + return type is the arity
+                todo!("Maybe move this to typed expr? need return type for arity")
+            }
+            Expr::Constant(..) => Either::Right(1),
+            Expr::VarExp { .. } => self.r#type.arity(),
+            Expr::OpExp { .. } => self.r#type.arity(), // I think this is correct
+        }
+    }
     fn resolve_unknowns(
         &self,
         declarations: &HashMap<String, Declaration>,
@@ -299,8 +325,8 @@ impl Type {
                     Either::Right(num) => num,
                 };
 
-                let num_types = types.len();
-                Either::Left((r#type_arity, num_types))
+                let num_types = types.len() - 1;
+                Either::Left((num_types, r#type_arity))
             }
             _ => Either::Right(1),
         }
@@ -446,20 +472,41 @@ impl Program {
             };
             match to_update {
                 // an expr declaration is a function or value declaration
-                Declaration::Expr { value, args, .. } => {
+                Declaration::Expr {
+                    value, ref args, ..
+                } => {
                     // TODO: check if it already has a type, and then see if this type can override
                     // it
                     // i.e. i64 can override 132, f64 can override f32
                     // check the arity (size of tuple) of the expr in this func
                     let expr_arity = if args.len() == 0 {
-                        Either::Right(value.expr.arity())
+                        match value.arity() {
+                            Either::Left(..) => todo!("hm"),
+                            e @ Either::Right(..) => e,
+                        }
                     } else {
                         // if there are args, this is a function
                         // +1 for the return type
-                        Either::Left((value.expr.arity(), args.len() + 1))
+                        Either::Left((
+                            args.len(),
+                            match value.arity() {
+                                Either::Left(..) => todo!("hm"),
+                                Either::Right(tupl_arity) => tupl_arity,
+                            },
+                        ))
                     };
                     let annotation_arity = annotation.arity();
-                    if expr_arity != annotation_arity {
+                    // when these types are made better, a tuple type of len 1 will be a singleton
+                    // type
+                    if expr_arity != annotation_arity && {
+                        // special case -- if arity is 1 then this could just be a tuple being
+                        // identified as a singleton name
+                        if let Either::Left((_, ret)) = expr_arity {
+                            ret != 1
+                        } else {
+                            true
+                        }
+                    } {
                         return Err(CompileError::ArityMismatch {
                             expr_arity: format_arity(expr_arity),
                             annotation_arity: format_arity(annotation_arity),
@@ -480,7 +527,9 @@ type TupleArity = usize;
 
 fn format_arity(arity: Either<FunctionArity, TupleArity>) -> String {
     match arity {
-        Either::Left((r#type, args)) => format!("f{}.{}", r#type, args),
+        Either::Left((arg_arity, return_type_arity)) => {
+            format!("f{}.{}", arg_arity, return_type_arity)
+        }
         Either::Right(n) => format!("{}", n),
     }
 }
@@ -492,6 +541,7 @@ impl TypeAnnotation {
 }
 
 impl Expr {
+    /*
     fn arity(&self) -> TupleArity {
         match self {
             Expr::TupleExp(ref tup) => tup.len(),
@@ -508,6 +558,7 @@ impl Expr {
             Expr::OpExp { .. } => 1, // I think this is correct
         }
     }
+    */
 }
 
 fn parse_program<'a>(i: &'a str) -> IResult<&'a str, Program, VerboseError<&'a str>> {
