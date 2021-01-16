@@ -20,6 +20,7 @@ use std::str::FromStr;
 use thiserror::Error;
 
 pub(crate) mod declaration;
+pub(crate) mod error;
 pub(crate) mod expr;
 pub(crate) mod literal;
 pub(crate) mod operator;
@@ -29,6 +30,7 @@ pub(crate) mod typed_expr;
 pub(crate) mod types;
 
 pub use declaration::*;
+pub use error::*;
 pub use expr::*;
 pub use literal::*;
 pub use operator::*;
@@ -161,29 +163,6 @@ impl TypeAnnotation {
     fn arity(&self) -> Either<FunctionArity, TupleArity> {
         self.r#type.arity()
     }
-}
-
-#[derive(Debug, Error)]
-pub enum CompileError {
-    #[error("Unrecognized function: \"{0}\"")]
-    UnrecognizedFunction(String),
-    #[error("Parse error, verbose stack dump: \n{0}\n")]
-    ParseError(String),
-    #[error("No main function found.")]
-    MissingMainFunction,
-    #[error("Program contained extraneous input: {0}")]
-    ExtraneousInput(String),
-    #[error("You wrote a type annotation for something that doesn't exist or isn't in scope. Declaration \"{0}\" not found.")]
-    AnnotatedNonexistentDeclaration(String),
-    #[error("Attempted to give a type annotation to something that cannot be annotated. \"{0}\" is not an annotatable expression.")]
-    AnnotatedNonAnnotatable(String),
-    #[error("Attempted to call something that isn't a function. \"{0}\" is not a function, it is a {1}.")]
-    CalledNonFunction(String, String),
-    #[error("Attempted to annotate expression of arity {expr_arity} with annotation of arity {annotation_arity}")]
-    ArityMismatch {
-        expr_arity: String,
-        annotation_arity: String,
-    },
 }
 
 impl std::convert::From<nom::Err<VerboseError<&str>>> for CompileError {

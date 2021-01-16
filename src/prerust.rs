@@ -11,16 +11,25 @@ struct Function {
     body: String, // TODO
     return_type: Option<Type>,
     visibility: Visibility,
+    type_args: Vec<String>,
 }
 
 impl Function {
+    fn type_args_string(&self) -> Rust {
+        if self.type_args.is_empty() {
+            String::new()
+        } else {
+            format!("<{}>", self.type_args.join(", "))
+        }
+    }
     fn to_rust_code(&self) -> Rust {
         format!(
-            "{}fn {}({}) {} {{ 
+            "{}fn {}{}({}) {} {{ 
 {}
 }}",
             self.visibility_string(),
             self.name,
+            self.type_args_string(),
             self.args_string(),
             self.return_type_string(),
             self.body
@@ -29,9 +38,9 @@ impl Function {
 
     fn visibility_string(&self) -> String {
         match &self.visibility {
-            Public => "pub ",
-            Private => "",
-            PublicToCrate => "pub(crate) ",
+            Visibility::Public => "pub ",
+            Visibility::Private => "",
+            Visibility::PublicToCrate => "pub(crate) ",
         }
         .into()
     }
