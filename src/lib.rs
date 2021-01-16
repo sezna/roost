@@ -24,8 +24,10 @@ pub(crate) mod expr;
 pub(crate) mod literal;
 pub(crate) mod operator;
 pub(crate) mod parser;
+pub(crate) mod prerust;
 pub(crate) mod typed_expr;
 pub(crate) mod types;
+
 pub use declaration::*;
 pub use expr::*;
 pub use literal::*;

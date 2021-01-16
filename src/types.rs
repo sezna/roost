@@ -51,6 +51,29 @@ impl Type {
         }
     }
 
+    pub(crate) fn to_rust_string(&self) -> String {
+        match &self {
+            Type::String => "String",
+            Type::SignedInteger(IntegerBits::Eight) => "i8",
+            Type::SignedInteger(IntegerBits::Sixteen) => "i16",
+            Type::SignedInteger(IntegerBits::ThirtyTwo) => "i32",
+            Type::SignedInteger(IntegerBits::SixtyFour) => "i64",
+            Type::SignedInteger(IntegerBits::OneTwentyEight) => "i128",
+            Type::UnsignedInteger(IntegerBits::Eight) => "u8",
+            Type::UnsignedInteger(IntegerBits::Sixteen) => "u16",
+            Type::UnsignedInteger(IntegerBits::ThirtyTwo) => "u32",
+            Type::UnsignedInteger(IntegerBits::SixtyFour) => "u64",
+            Type::UnsignedInteger(IntegerBits::OneTwentyEight) => "u128",
+            Type::Float(FloatBits::ThirtyTwo) => "f32",
+            Type::Float(FloatBits::SixtyFour) => "f64",
+            Type::UnsignedInteger(IntegerBits::Arch) => "usize",
+            Type::SignedInteger(IntegerBits::Arch) => "isize",
+            Type::Bool => "bool",
+            _ => todo!("Exhaustive type rendering"),
+        }
+        .into()
+    }
+
     fn from_string(a: &str) -> Type {
         match a {
             "String" => Type::String,
