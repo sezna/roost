@@ -11,7 +11,7 @@ struct Function {
     body: String, // TODO
     return_type: Option<Type>,
     visibility: Visibility,
-    type_args: Vec<String>,
+    type_args: Vec<String>, // TODO constraints? that's long-tail tho
 }
 
 impl Function {
@@ -24,9 +24,7 @@ impl Function {
     }
     fn to_rust_code(&self) -> Rust {
         format!(
-            "{}fn {}{}({}) {} {{ 
-{}
-}}",
+            "{}fn {}{}({}) {} {{{}}}",
             self.visibility_string(),
             self.name,
             self.type_args_string(),
@@ -63,3 +61,20 @@ impl Function {
 }
 
 type Rust = String;
+
+#[test]
+fn test_fn() {
+    let func = Function {
+        name: "foo".into(),
+        args: vec![("a".into(), Type::Bool)],
+        body: "return 10;".into(),
+        return_type: Some(Type::SignedInteger(IntegerBits::ThirtyTwo)),
+        visibility: Visibility::Public,
+        type_args: vec!["T".into(), "F".into()],
+    };
+
+    assert_eq!(
+        func.to_rust_code(),
+        "pub fn foo<T, F>(a: bool)  -> i32 {return 10;}"
+    );
+}
